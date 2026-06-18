@@ -20,8 +20,6 @@ FastAPI · Qdrant (self-hosted, векторное хранилище) · embedd
 
 ## Документация
 
-- [`AGENT_VERA_ARCHITECTURE.md`](AGENT_VERA_ARCHITECTURE.md) — архитектура всей системы из трёх сервисов
-- [`AGENT_VERA_WBS.txt`](AGENT_VERA_WBS.txt) — иерархическая структура работ проекта
 - [`RAG_SERVICE_PLAN.md`](RAG_SERVICE_PLAN.md) — план реализации этого сервиса по этапам
 
 ## Статус
