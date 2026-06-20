@@ -13,10 +13,11 @@ RAG Service — сервис семантического поиска по ба
 - **Ingestion** — препроцессинг документов, иерархический чанкинг (документ → секция → чанк), обогащение чанков синтетическими заголовками и гипотетическими вопросами (LLM), эмбеддинг и сохранение в Qdrant
 - **Search** — гибридный поиск (dense + sparse/BM25 + RRF fusion) с последующим переранжированием cross-encoder reranker'ом
 - **API** — `POST /search`, `POST /ingest`, `DELETE /document/{id}`, `GET /health`
+- **Админка** (`/admin`, sqladmin) — журнал поисковых запросов для анализа качества поиска; дизайн и подход общие со всеми сервисами продукта «Работа для всех» (см. `api_work_for_everyone/DESIGN_GUIDE.md`)
 
 ## Стек
 
-FastAPI · Qdrant (self-hosted, векторное хранилище) · embedding-модель (конфигурируется) · cross-encoder reranker (`BAAI/bge-reranker-base` или аналог) · OpenTelemetry/openinference → Arize Phoenix
+FastAPI · Qdrant (self-hosted, векторное хранилище) · embedding-модель (конфигурируется) · cross-encoder reranker (`BAAI/bge-reranker-base` или аналог)
 
 ## Документация
 

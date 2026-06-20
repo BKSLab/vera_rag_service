@@ -1,0 +1,69 @@
+from unittest.mock import AsyncMock
+
+from app.clients.llm import LlmClient
+from app.exceptions.llm import LlmApiRequestError
+from app.search.reranker import rerank_chunks
+from app.models.schemas import RerankResult
+
+
+def make_candidates(count: int = 5) -> list[tuple[str, str]]:
+    return [(f'chunk-{i}', f'Текст кандидата {i}') for i in range(count)]
+
+
+async def test_rerank_chunks_returns_empty_list_for_no_candidates():
+    llm_client = AsyncMock(spec=LlmClient)
+
+    result = await rerank_chunks(llm_client, 'запрос', [])
+
+    assert result == []
+    llm_client.get_llm_response.assert_not_called()
+
+
+async def test_rerank_chunks_maps_ranked_indices_to_chunk_ids():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = RerankResult(ranked_indices=[3, 1, 5])
+    candidates = make_candidates(5)
+
+    result = await rerank_chunks(llm_client, 'запрос', candidates)
+
+    assert result == ['chunk-2', 'chunk-0', 'chunk-4']
+
+
+async def test_rerank_chunks_drops_out_of_range_and_duplicate_indices():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = RerankResult(ranked_indices=[1, 99, 1, 2, 0])
+    candidates = make_candidates(3)
+
+    result = await rerank_chunks(llm_client, 'запрос', candidates)
+
+    assert result == ['chunk-0', 'chunk-1']
+
+
+async def test_rerank_chunks_respects_top_n():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = RerankResult(ranked_indices=[1, 2, 3, 4, 5])
+    candidates = make_candidates(5)
+
+    result = await rerank_chunks(llm_client, 'запрос', candidates, top_n=2)
+
+    assert result == ['chunk-0', 'chunk-1']
+
+
+async def test_rerank_chunks_falls_back_to_original_order_when_llm_unavailable():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.side_effect = LlmApiRequestError(error_details='boom', request_url='https://x')
+    candidates = make_candidates(7)
+
+    result = await rerank_chunks(llm_client, 'запрос', candidates, top_n=5)
+
+    assert result == ['chunk-0', 'chunk-1', 'chunk-2', 'chunk-3', 'chunk-4']
+
+
+async def test_rerank_chunks_falls_back_when_llm_returns_no_valid_indices():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = RerankResult(ranked_indices=[99, 100])
+    candidates = make_candidates(3)
+
+    result = await rerank_chunks(llm_client, 'запрос', candidates, top_n=2)
+
+    assert result == ['chunk-0', 'chunk-1']
