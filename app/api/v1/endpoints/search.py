@@ -43,7 +43,7 @@ async def search_chunks(data: SearchRequest, service: SearchServiceDep) -> Searc
     """
     logger.info('🚀 Запрос POST /search. Запрос: %s.', data.query)
     try:
-        filters = SearchFilters(audience=data.audience, topic=data.topic, source_type=data.source_type)
+        filters = SearchFilters(audience=data.audience, topic=data.topic, category=data.category)
         chunks = await service.search(query=data.query, filters=filters, top_k=data.top_k)
         logger.info('✅ Запрос POST /search выполнен. Найдено: %d.', len(chunks))
         return SearchResponse(chunks=chunks)

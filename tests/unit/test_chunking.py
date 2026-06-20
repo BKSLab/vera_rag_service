@@ -61,7 +61,7 @@ def test_chunk_document_assigns_sequential_chunk_index_across_sections():
     sections = [
         Section(
             document_id='fz-181',
-            source_type='law',
+            category='labor_code',
             section_index=0,
             section_number='20',
             section_title='Статья 20',
@@ -69,7 +69,7 @@ def test_chunk_document_assigns_sequential_chunk_index_across_sections():
         ),
         Section(
             document_id='fz-181',
-            source_type='law',
+            category='labor_code',
             section_index=1,
             section_number='21',
             section_title='Статья 21',
@@ -88,7 +88,7 @@ def test_chunk_document_preserves_section_metadata_on_each_chunk():
     sections = [
         Section(
             document_id='fz-181',
-            source_type='law',
+            category='labor_code',
             section_index=0,
             section_number='21',
             section_title='Статья 21. Квотирование рабочих мест',
@@ -101,7 +101,7 @@ def test_chunk_document_preserves_section_metadata_on_each_chunk():
     assert len(chunks) > 1
     for chunk in chunks:
         assert chunk.document_id == 'fz-181'
-        assert chunk.source_type == 'law'
+        assert chunk.category == 'labor_code'
         assert chunk.section_index == 0
         assert chunk.section_number == '21'
         assert chunk.section_title == 'Статья 21. Квотирование рабочих мест'
@@ -111,7 +111,7 @@ def test_chunk_document_generates_unique_chunk_ids():
     sections = [
         Section(
             document_id='fz-181',
-            source_type='law',
+            category='labor_code',
             section_index=0,
             section_number='21',
             section_title='Статья 21',

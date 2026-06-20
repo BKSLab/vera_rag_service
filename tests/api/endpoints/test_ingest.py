@@ -11,7 +11,7 @@ from app.services.ingestion import IngestionService
 
 VALID_PAYLOAD = {
     'document_id': 'fz-181-art21',
-    'source_type': 'law',
+    'category': 'labor_code',
     'raw_text': 'Текст статьи 21 ФЗ-181.',
     'source_title': 'ФЗ-181, Статья 21',
     'audience': 'both',
@@ -36,8 +36,8 @@ async def test_ingest_document_returns_200_with_summary(async_client: AsyncClien
     assert body['replaced_versions'] == []
 
 
-async def test_ingest_document_returns_422_when_source_type_invalid(async_client: AsyncClient):
-    payload = {**VALID_PAYLOAD, 'source_type': 'video'}
+async def test_ingest_document_returns_422_when_category_invalid(async_client: AsyncClient):
+    payload = {**VALID_PAYLOAD, 'category': 'video'}
 
     response = await async_client.post('/api/v1/ingest', json=payload)
 

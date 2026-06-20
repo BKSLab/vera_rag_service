@@ -39,7 +39,7 @@ class SearchLogAdmin(ModelView, model=SearchLog):
         SearchLog.query,
         SearchLog.audience,
         SearchLog.topic,
-        SearchLog.source_type,
+        SearchLog.category,
         SearchLog.latency_embed_query_ms,
         SearchLog.latency_hybrid_search_ms,
         SearchLog.latency_rerank_ms,

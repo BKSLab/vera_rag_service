@@ -6,7 +6,7 @@ from qdrant_client import AsyncQdrantClient
 
 from app.core.settings import get_settings
 from app.models.schemas import Chunk, DocumentMetadataInput, EmbeddedChunk, EnrichedChunk, SearchFilters
-from app.search.hybrid import dense_search, get_candidate_chunk_ids, sparse_search
+from app.search.hybrid import DENSE_TOP_K, dense_search, get_candidate_chunk_ids, hybrid_search, sparse_search
 from app.vectorstore.qdrant_client import QdrantVectorStore
 
 VECTOR_DIM = 4
@@ -29,7 +29,7 @@ async def populated_store():
     embedded_chunks = []
     for text, audience, vector in chunks_data:
         chunk = Chunk(
-            chunk_id=str(uuid4()), chunk_index=0, document_id='doc-1', source_type='law',
+            chunk_id=str(uuid4()), chunk_index=0, document_id='doc-1', category='labor_code',
             section_index=0, section_number=None, section_title='Секция', text=text,
         )
         enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])
@@ -115,3 +115,78 @@ async def test_get_candidate_chunk_ids_merges_dense_and_sparse_results(populated
     assert quota_chunk_id in candidate_ids
     assert len(candidate_ids) == 3
     assert candidate_ids[0] == quota_chunk_id
+
+
+@pytest_asyncio.fixture
+async def imbalanced_category_store():
+    """Коллекция, где `labor_code` крупный и почти идеально совпадает с
+    запросом, а `case_law` — один чанк с заметно более низким cosine-score.
+    Воспроизводит риск из раздела 4 плана: при плоском top-K `case_law`
+    оказался бы за пределами DENSE_TOP_K и не дошёл бы до reranker'а."""
+    settings = get_settings().qdrant
+    client = AsyncQdrantClient(url=settings.qdrant_url)
+    collection_name = f'test_{uuid4().hex}'
+    store = QdrantVectorStore(client=client, collection_name=collection_name, vector_dim=VECTOR_DIM)
+    await store.ensure_collection()
+
+    metadata = DocumentMetadataInput(
+        source_title='Источник', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+    )
+
+    labor_code_chunks = []
+    for i in range(DENSE_TOP_K + 5):
+        chunk = Chunk(
+            chunk_id=str(uuid4()), chunk_index=i, document_id='tk-rf', category='labor_code',
+            section_index=0, section_number=None, section_title='Секция', text=f'Норма ТК РФ номер {i}.',
+        )
+        enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])
+        vector = [1.0, 0.0, 0.0, 0.0]
+        embedded = EmbeddedChunk(enriched_chunk=enriched, chunk_vector=vector, question_vectors=[vector, vector, vector])
+        labor_code_chunks.append(embedded)
+        await store.upsert_chunk(embedded, metadata)
+
+    case_law_chunk_text = 'Разъяснение Пленума ВС РФ по применению нормы.'
+    case_law_chunk = Chunk(
+        chunk_id=str(uuid4()), chunk_index=0, document_id='plenum-1', category='case_law',
+        section_index=0, section_number=None, section_title='Секция', text=case_law_chunk_text,
+    )
+    case_law_enriched = EnrichedChunk(
+        chunk=case_law_chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?']
+    )
+    case_law_vector = [0.5, 0.5, 0.0, 0.0]
+    case_law_embedded = EmbeddedChunk(
+        enriched_chunk=case_law_enriched, chunk_vector=case_law_vector,
+        question_vectors=[case_law_vector, case_law_vector, case_law_vector],
+    )
+    await store.upsert_chunk(case_law_embedded, metadata)
+
+    yield store, case_law_embedded.enriched_chunk.chunk.chunk_id
+
+    await client.delete_collection(collection_name)
+    await client.close()
+
+
+async def test_flat_dense_search_crowds_out_small_category(imbalanced_category_store):
+    """Подтверждает саму проблему (раздел 4 плана) — без балансировки
+    case_law не попадает даже в top-K плоского dense-поиска."""
+    store, case_law_chunk_id = imbalanced_category_store
+
+    results = await dense_search(store.client, store.collection_name, query_vector=[1.0, 0.0, 0.0, 0.0])
+
+    result_ids = [chunk_id for chunk_id, _ in results]
+    assert case_law_chunk_id not in result_ids
+
+
+async def test_hybrid_search_balances_candidates_across_categories(imbalanced_category_store):
+    """Этап 5.1 плана: без явного фильтра `category` hybrid_search ищет
+    отдельно по каждой категории, поэтому case_law остаётся среди
+    кандидатов для reranker'а, даже когда labor_code занял бы весь top-K."""
+    store, case_law_chunk_id = imbalanced_category_store
+
+    result = await hybrid_search(
+        store.client, store.collection_name,
+        query_vector=[1.0, 0.0, 0.0, 0.0], query_text='норма',
+    )
+
+    fused_ids = [chunk_id for chunk_id, _ in result.fused]
+    assert case_law_chunk_id in fused_ids

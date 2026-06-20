@@ -34,7 +34,7 @@ def make_embedded_chunk(document_id: str = 'fz-181', chunk_index: int = 0, quest
         chunk_id=str(uuid4()),
         chunk_index=chunk_index,
         document_id=document_id,
-        source_type='law',
+        category='labor_code',
         section_index=0,
         section_number='21',
         section_title='Статья 21',

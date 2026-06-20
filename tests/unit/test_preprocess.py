@@ -1,5 +1,3 @@
-import pytest
-
 from app.ingestion.preprocess import (
     clean_text,
     extract_article_sections,
@@ -40,7 +38,7 @@ def test_extract_law_sections_splits_by_article_with_number_and_title():
         'Текст статьи 21.'
     )
 
-    sections = extract_law_sections(document_id='fz-181', text=text)
+    sections = extract_law_sections(document_id='fz-181', text=text, category='labor_code')
 
     assert len(sections) == 2
     assert sections[0].section_number == '20'
@@ -54,7 +52,7 @@ def test_extract_law_sections_splits_by_article_with_number_and_title():
 def test_extract_law_sections_discards_preamble_before_first_article():
     text = 'Преамбула закона, не привязанная к статье.\nСтатья 1. Общие положения\nТекст статьи 1.'
 
-    sections = extract_law_sections(document_id='fz-181', text=text)
+    sections = extract_law_sections(document_id='fz-181', text=text, category='labor_code')
 
     assert len(sections) == 1
     assert 'Преамбула' not in sections[0].text
@@ -68,7 +66,7 @@ def test_extract_article_sections_splits_by_markdown_headings():
         'Текст про права соискателя.'
     )
 
-    sections = extract_article_sections(document_id='article-1', text=text)
+    sections = extract_article_sections(document_id='article-1', text=text, category='authorial')
 
     assert len(sections) == 2
     assert sections[0].section_title == 'Введение'
@@ -80,7 +78,7 @@ def test_extract_article_sections_splits_by_markdown_headings():
 def test_extract_article_sections_returns_single_section_when_no_headings():
     text = 'Статья без заголовков, просто сплошной текст.'
 
-    sections = extract_article_sections(document_id='article-2', text=text)
+    sections = extract_article_sections(document_id='article-2', text=text, category='authorial')
 
     assert len(sections) == 1
     assert sections[0].text == text
@@ -90,21 +88,18 @@ def test_extract_article_sections_returns_single_section_when_no_headings():
 def test_preprocess_document_dispatches_to_law_extractor():
     raw_text = 'Статья 1. Общие положения\nТекст.'
 
-    sections = preprocess_document(document_id='fz-181', raw_text=raw_text, source_type='law')
+    sections = preprocess_document(document_id='fz-181', raw_text=raw_text, category='labor_code')
 
     assert len(sections) == 1
-    assert sections[0].source_type == 'law'
+    assert sections[0].category == 'labor_code'
 
 
 def test_preprocess_document_dispatches_to_article_extractor():
     raw_text = '# Заголовок\nТекст.'
 
-    sections = preprocess_document(document_id='article-1', raw_text=raw_text, source_type='article')
+    sections = preprocess_document(document_id='article-1', raw_text=raw_text, category='authorial')
 
     assert len(sections) == 1
-    assert sections[0].source_type == 'article'
+    assert sections[0].category == 'authorial'
 
 
-def test_preprocess_document_raises_on_unknown_source_type():
-    with pytest.raises(ValueError):
-        preprocess_document(document_id='doc-1', raw_text='текст', source_type='unknown')

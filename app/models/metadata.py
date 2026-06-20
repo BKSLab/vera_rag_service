@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SourceType = Literal['law', 'article']
+Category = Literal['labor_code', 'case_law', 'federal_law', 'other_npa', 'authorial']
 Audience = Literal['seeker', 'employer', 'both']
 
 
@@ -12,7 +12,7 @@ class ChunkMetadata(BaseModel):
 
     chunk_id: str = Field(..., description='Уникальный идентификатор чанка (uuid).')
     document_id: str = Field(..., description='Идентификатор документа-источника.', examples=['fz-181-art21'])
-    source_type: SourceType = Field(..., description='Тип источника.')
+    category: Category = Field(..., description='Категория источника (раздел 3, Этап 5.1 плана).')
     source_title: str = Field(..., description='Человекочитаемое название источника.', examples=['ФЗ-181, Статья 21'])
     audience: Audience = Field(..., description='Целевая аудитория чанка.')
     topic: str = Field(..., description='Тема чанка.', examples=['quota'])

@@ -41,7 +41,7 @@ def build_chunk_metadata(
     return ChunkMetadata(
         chunk_id=chunk.chunk_id,
         document_id=chunk.document_id,
-        source_type=chunk.source_type,
+        category=chunk.category,
         source_title=document_metadata.source_title,
         audience=document_metadata.audience,
         topic=document_metadata.topic,

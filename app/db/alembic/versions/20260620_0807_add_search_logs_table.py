@@ -27,7 +27,7 @@ def upgrade() -> None:
         sa.Column('query', sa.Text(), nullable=False, comment='Исходный текст поискового запроса.'),
         sa.Column('audience', sa.String(length=20), nullable=True, comment='Значение фильтра audience, если был задан.'),
         sa.Column('topic', sa.String(length=100), nullable=True, comment='Значение фильтра topic, если был задан.'),
-        sa.Column('source_type', sa.String(length=20), nullable=True, comment='Значение фильтра source_type, если был задан.'),
+        sa.Column('category', sa.String(length=20), nullable=True, comment='Значение фильтра category, если был задан.'),
         sa.Column('dense_candidates', postgresql.JSONB(astext_type=sa.Text()), nullable=False, comment='Top-20 кандидатов dense-поиска до фьюжна: [[chunk_id, score], ...].'),
         sa.Column('sparse_candidates', postgresql.JSONB(astext_type=sa.Text()), nullable=False, comment='Top-20 кандидатов sparse/BM25-поиска до фьюжна: [[chunk_id, score], ...].'),
         sa.Column('rrf_candidates', postgresql.JSONB(astext_type=sa.Text()), nullable=False, comment='Результат RRF fusion: [[chunk_id, score], ...].'),

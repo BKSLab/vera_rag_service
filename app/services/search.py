@@ -98,6 +98,7 @@ class SearchService:
                 source_title=payload_by_id[chunk_id]['source_title'],
                 audience=payload_by_id[chunk_id]['audience'],
                 topic=payload_by_id[chunk_id]['topic'],
+                category=payload_by_id[chunk_id]['category'],
                 score=rrf_scores.get(chunk_id, 0.0),
             )
             for chunk_id in reranked_ids
@@ -131,7 +132,7 @@ class SearchService:
             query=query,
             audience=filters.audience,
             topic=filters.topic,
-            source_type=filters.source_type,
+            category=filters.category,
             dense_candidates=[list(item) for item in hybrid_result.dense],
             sparse_candidates=[list(item) for item in hybrid_result.sparse],
             rrf_candidates=[list(item) for item in hybrid_result.fused],

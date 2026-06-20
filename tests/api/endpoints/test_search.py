@@ -20,6 +20,7 @@ async def test_search_chunks_returns_200_with_results(async_client: AsyncClient)
             source_title='ФЗ-181, Статья 21',
             audience='employer',
             topic='quota',
+            category='federal_law',
             score=0.9,
         )
     ]

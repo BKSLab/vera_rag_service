@@ -26,7 +26,7 @@ router = APIRouter()
             'description': 'Документ проиндексирован.',
             'content': {'application/json': {'example': {'document_id': 'fz-181-art21', 'version': '2026-01-01', 'chunks_count': 3, 'replaced_versions': []}}},
         },
-        422: {'description': 'Невалидный source_type или пустой текст.'},
+        422: {'description': 'Невалидная category или пустой текст.'},
         500: {
             'description': 'Ошибка при запросе к LLM-обогащению или Embedding API.',
             'content': {'application/json': {'example': {'detail': 'Ошибка при запросе к LLM API. Подробности: ...'}}},
@@ -56,7 +56,7 @@ async def ingest_document(data: IngestRequest, service: IngestionServiceDep) -> 
         result = await service.ingest_document(
             document_id=data.document_id,
             raw_text=data.raw_text,
-            source_type=data.source_type,
+            category=data.category,
             document_metadata=document_metadata,
         )
         logger.info('✅ Запрос POST /ingest выполнен. document_id=%s.', data.document_id)

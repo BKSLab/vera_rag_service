@@ -10,7 +10,7 @@ def make_enriched_chunk(chunk_index: int = 0, questions: int = 3) -> EnrichedChu
         chunk_id=f'chunk-{chunk_index}',
         chunk_index=chunk_index,
         document_id='fz-181',
-        source_type='law',
+        category='labor_code',
         section_index=0,
         section_number='21',
         section_title='Статья 21',

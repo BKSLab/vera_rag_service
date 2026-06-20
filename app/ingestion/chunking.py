@@ -103,7 +103,7 @@ def chunk_document(sections: list[Section]) -> list[Chunk]:
                     chunk_id=str(uuid4()),
                     chunk_index=chunk_index,
                     document_id=section.document_id,
-                    source_type=section.source_type,
+                    category=section.category,
                     section_index=section.section_index,
                     section_number=section.section_number,
                     section_title=section.section_title,

@@ -2,7 +2,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.metadata import Audience, SourceType
+from app.models.metadata import Audience, Category
 
 
 class Chunk(BaseModel):
@@ -16,7 +16,7 @@ class Chunk(BaseModel):
     chunk_id: str = Field(..., description='Уникальный идентификатор чанка (uuid).')
     chunk_index: int = Field(..., description='Сквозной порядковый номер чанка в пределах документа.')
     document_id: str = Field(..., description='Идентификатор документа-источника.')
-    source_type: SourceType = Field(..., description='Тип источника.')
+    category: Category = Field(..., description='Категория источника (раздел 3 плана).')
     section_index: int = Field(..., description='Номер секции-источника в документе.')
     section_number: str | None = Field(None, description='Номер статьи/пункта (для law).')
     section_title: str = Field(..., description='Заголовок секции-источника.')
@@ -33,7 +33,7 @@ class Section(BaseModel):
     """
 
     document_id: str = Field(..., description='Идентификатор документа-источника.')
-    source_type: SourceType = Field(..., description='Тип источника.')
+    category: Category = Field(..., description='Категория источника (раздел 3 плана).')
     section_index: int = Field(..., description='Порядковый номер секции в документе.')
     section_number: str | None = Field(
         None, description='Номер статьи/пункта (для law) — извлекается из текста, если есть.'
@@ -112,7 +112,7 @@ class SearchFilters(BaseModel):
 
     audience: Audience | None = Field(None, description='Фильтр по целевой аудитории.')
     topic: str | None = Field(None, description='Фильтр по теме.')
-    source_type: SourceType | None = Field(None, description='Фильтр по типу источника.')
+    category: Category | None = Field(None, description='Фильтр по категории источника.')
 
 
 class SearchResultChunk(BaseModel):
@@ -124,6 +124,10 @@ class SearchResultChunk(BaseModel):
     source_title: str = Field(..., description='Человекочитаемое название источника.')
     audience: Audience = Field(..., description='Целевая аудитория чанка.')
     topic: str = Field(..., description='Тема чанка.')
+    category: Category = Field(
+        ..., description='Категория источника (Этап 5.1 плана) — нужна потребителю, чтобы '
+        'выстроить финальный ответ в порядке "база → судебная практика → иные акты → комментарий".'
+    )
     score: float = Field(..., description='Итоговый score после RRF fusion.')
 
 
@@ -150,7 +154,7 @@ class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1, description='Текст поискового запроса.', examples=['Какая квота на трудоустройство инвалидов?'])
     audience: Audience | None = Field(None, description='Фильтр по целевой аудитории.')
     topic: str | None = Field(None, description='Фильтр по теме.')
-    source_type: SourceType | None = Field(None, description='Фильтр по типу источника.')
+    category: Category | None = Field(None, description='Фильтр по категории источника.')
     top_k: int = Field(5, ge=1, le=20, description='Сколько чанков вернуть после переранжирования.')
 
 
@@ -164,7 +168,7 @@ class IngestRequest(BaseModel):
     """Тело запроса `POST /ingest` — запуск ingestion-пайплайна для одного документа."""
 
     document_id: str = Field(..., min_length=1, description='Идентификатор документа.', examples=['fz-181-art21'])
-    source_type: SourceType = Field(..., description='Тип источника.')
+    category: Category = Field(..., description='Категория источника (раздел 3 плана).')
     raw_text: str = Field(..., min_length=1, description='Исходный текст документа (PDF/MD/TXT уже декодированы в строку).')
     source_title: str = Field(..., description='Человекочитаемое название источника.')
     audience: Audience = Field(..., description='Целевая аудитория.')

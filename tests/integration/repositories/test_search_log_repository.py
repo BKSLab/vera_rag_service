@@ -11,7 +11,7 @@ async def test_save_search_log_persists_all_fields(db_session):
         query='квота на инвалидов',
         audience='employer',
         topic='quota',
-        source_type='law',
+        category='labor_code',
         dense_candidates=[['chunk-1', 0.9]],
         sparse_candidates=[['chunk-1', 5.2]],
         rrf_candidates=[['chunk-1', 0.032]],

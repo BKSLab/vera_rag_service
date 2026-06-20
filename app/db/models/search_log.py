@@ -26,7 +26,7 @@ class SearchLog(Base):
     query: Mapped[str] = mapped_column(Text, nullable=False, comment='Исходный текст поискового запроса.')
     audience: Mapped[str | None] = mapped_column(String(length=20), nullable=True, comment='Значение фильтра audience, если был задан.')
     topic: Mapped[str | None] = mapped_column(String(length=100), nullable=True, comment='Значение фильтра topic, если был задан.')
-    source_type: Mapped[str | None] = mapped_column(String(length=20), nullable=True, comment='Значение фильтра source_type, если был задан.')
+    category: Mapped[str | None] = mapped_column(String(length=20), nullable=True, comment='Значение фильтра category, если был задан.')
     dense_candidates: Mapped[list] = mapped_column(JSONB, nullable=False, comment='Top-20 кандидатов dense-поиска до фьюжна: [[chunk_id, score], ...].')
     sparse_candidates: Mapped[list] = mapped_column(JSONB, nullable=False, comment='Top-20 кандидатов sparse/BM25-поиска до фьюжна: [[chunk_id, score], ...].')
     rrf_candidates: Mapped[list] = mapped_column(JSONB, nullable=False, comment='Результат RRF fusion: [[chunk_id, score], ...].')

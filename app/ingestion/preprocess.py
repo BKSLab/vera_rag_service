@@ -1,6 +1,19 @@
 import re
 
+from app.models.metadata import Category
 from app.models.schemas import Section
+
+# Категория источника (5 значений, Этап 5.1 плана) определяет и стратегию
+# извлечения структуры: нормативные акты и судебная практика размечены
+# номерами статей ("Статья N") — `law`-парсер; авторские материалы — это
+# markdown с заголовками разделов — `article`-парсер.
+_CATEGORY_TO_STRUCTURE: dict[Category, str] = {
+    'labor_code': 'law',
+    'federal_law': 'law',
+    'other_npa': 'law',
+    'case_law': 'law',
+    'authorial': 'article',
+}
 
 LAW_ARTICLE_PATTERN = re.compile(
     r'^Статья\s+(?P<number>\d+(?:\.\d+)?)\.?\s*(?P<title>.*)$',
@@ -33,19 +46,36 @@ def clean_text(raw_text: str) -> str:
     return text.strip()
 
 
-def extract_law_sections(document_id: str, text: str) -> list[Section]:
+def extract_law_sections(document_id: str, text: str, category: Category) -> list[Section]:
     """Извлекает секции нормативного акта — по одной на каждую найденную статью.
 
     Args:
         document_id: Идентификатор документа-источника.
         text: Очищенный текст документа.
+        category: Категория источника (раздел 3 плана) — переносится в каждую секцию.
 
     Returns:
         Список секций с номером и заголовком статьи как структурными метаданными.
         Текст до первой найденной статьи (преамбула) отбрасывается — он не
         привязан к конкретной статье и не несёт самостоятельной правовой нормы.
+        Если в тексте не найдено ни одной "Статья N" (например, судебный акт,
+        размеченный пунктами, а не статьями) — весь текст становится одной
+        секцией, а не отбрасывается молча.
     """
     matches = list(LAW_ARTICLE_PATTERN.finditer(text))
+
+    if not matches:
+        return [
+            Section(
+                document_id=document_id,
+                category=category,
+                section_index=0,
+                section_number=None,
+                section_title=document_id,
+                text=text.strip(),
+            )
+        ]
+
     sections: list[Section] = []
 
     for section_index, match in enumerate(matches):
@@ -57,7 +87,7 @@ def extract_law_sections(document_id: str, text: str) -> list[Section]:
         sections.append(
             Section(
                 document_id=document_id,
-                source_type='law',
+                category=category,
                 section_index=section_index,
                 section_number=match.group('number'),
                 section_title=f"Статья {match.group('number')}" + (f'. {title}' if title else ''),
@@ -68,12 +98,13 @@ def extract_law_sections(document_id: str, text: str) -> list[Section]:
     return sections
 
 
-def extract_article_sections(document_id: str, text: str) -> list[Section]:
+def extract_article_sections(document_id: str, text: str, category: Category) -> list[Section]:
     """Извлекает секции авторской статьи — по одной на каждый markdown-заголовок.
 
     Args:
         document_id: Идентификатор документа-источника.
         text: Очищенный текст документа (markdown).
+        category: Категория источника (раздел 3 плана) — переносится в каждую секцию.
 
     Returns:
         Список секций с заголовком раздела как структурными метаданными.
@@ -85,7 +116,7 @@ def extract_article_sections(document_id: str, text: str) -> list[Section]:
         return [
             Section(
                 document_id=document_id,
-                source_type='article',
+                category=category,
                 section_index=0,
                 section_number=None,
                 section_title=document_id,
@@ -102,7 +133,7 @@ def extract_article_sections(document_id: str, text: str) -> list[Section]:
         sections.append(
             Section(
                 document_id=document_id,
-                source_type='article',
+                category=category,
                 section_index=section_index,
                 section_number=None,
                 section_title=match.group('title').strip(),
@@ -113,26 +144,21 @@ def extract_article_sections(document_id: str, text: str) -> list[Section]:
     return sections
 
 
-def preprocess_document(document_id: str, raw_text: str, source_type: str) -> list[Section]:
+def preprocess_document(document_id: str, raw_text: str, category: Category) -> list[Section]:
     """Препроцессит документ от Expert: очистка текста + извлечение структуры (Этап 1 плана).
 
     Args:
         document_id: Идентификатор документа-источника.
         raw_text: Исходный текст документа (PDF/MD/TXT уже декодированы в строку).
-        source_type: 'law' для нормативных актов, 'article' для авторских статей.
+        category: Категория источника (раздел 3, Этап 5.1 плана) — определяет
+            и метаданные, и стратегию извлечения структуры (см. `_CATEGORY_TO_STRUCTURE`).
 
     Returns:
         Список секций документа с текстом и структурными метаданными,
         готовый ко входу в Этап 2 (иерархический чанкинг).
-
-    Raises:
-        ValueError: Если source_type не 'law' и не 'article'.
     """
     text = clean_text(raw_text)
 
-    if source_type == 'law':
-        return extract_law_sections(document_id, text)
-    if source_type == 'article':
-        return extract_article_sections(document_id, text)
-
-    raise ValueError(f"Неизвестный source_type: {source_type!r}. Допустимо: 'law', 'article'.")
+    if _CATEGORY_TO_STRUCTURE[category] == 'law':
+        return extract_law_sections(document_id, text, category)
+    return extract_article_sections(document_id, text, category)
