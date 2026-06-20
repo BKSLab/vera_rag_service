@@ -1,0 +1,80 @@
+{% extends "sqladmin/layout.html" %}
+{% block content %}
+<div class="col-12">
+  <div class="row row-cards mb-3">
+    <div class="col-sm-6 col-lg-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Postgres</div>
+          <div class="h2 mb-0">{{ 'OK' if stats.postgres_ok else 'НЕДОСТУПЕН' }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Qdrant</div>
+          <div class="h2 mb-0">{{ stats.qdrant_collection_status if stats.qdrant_ok else 'НЕДОСТУПЕН' }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Документов (версий / уникальных)</div>
+          <div class="h2 mb-0">{{ stats.documents_total }} / {{ stats.distinct_documents }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Активных версий</div>
+          <div class="h2 mb-0">{{ stats.documents_active }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row row-cards mb-3">
+    <div class="col-sm-6 col-lg-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Чанков в Qdrant</div>
+          <div class="h2 mb-0">{{ stats.qdrant_points_count if stats.qdrant_points_count is not none else '—' }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Поисковых запросов всего</div>
+          <div class="h2 mb-0">{{ stats.search_logs_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Последний поиск</div>
+          <div class="h4 mb-0">{{ stats.last_search_at.strftime('%Y-%m-%d %H:%M') if stats.last_search_at else '—' }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">Средняя latency поиска (по всем запросам)</h3></div>
+    <div class="card-body">
+      <table class="table table-vcenter">
+        <thead><tr><th>Стадия</th><th>Средняя latency, мс</th></tr></thead>
+        <tbody>
+          <tr><td>embed_query</td><td>{{ '%.1f' | format(stats.avg_latency_embed_query_ms) if stats.avg_latency_embed_query_ms is not none else '—' }}</td></tr>
+          <tr><td>hybrid_search</td><td>{{ '%.1f' | format(stats.avg_latency_hybrid_search_ms) if stats.avg_latency_hybrid_search_ms is not none else '—' }}</td></tr>
+          <tr><td>rerank</td><td>{{ '%.1f' | format(stats.avg_latency_rerank_ms) if stats.avg_latency_rerank_ms is not none else '—' }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

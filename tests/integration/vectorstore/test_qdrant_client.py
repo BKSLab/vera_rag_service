@@ -151,3 +151,39 @@ async def test_delete_document_filters_by_version_when_given(vector_store):
 
     assert remaining_v1 == []
     assert len(remaining_v2) == 1
+
+
+async def test_list_chunks_returns_payload_sorted_by_chunk_index(vector_store):
+    await vector_store.ensure_collection()
+    document_metadata = make_document_metadata()
+    chunk_1 = make_embedded_chunk(document_id='fz-181', chunk_index=1)
+    chunk_0 = make_embedded_chunk(document_id='fz-181', chunk_index=0)
+    other_document_chunk = make_embedded_chunk(document_id='fz-999', chunk_index=0)
+
+    await vector_store.upsert_chunks([chunk_1, chunk_0], document_metadata)
+    await vector_store.upsert_chunk(other_document_chunk, document_metadata)
+
+    chunks = await vector_store.list_chunks('fz-181')
+
+    assert [chunk['chunk_index'] for chunk in chunks] == [0, 1]
+    assert chunks[0]['text'] == 'Текст чанка.'
+    assert chunks[0]['chunk_id'] == chunk_0.enriched_chunk.chunk.chunk_id
+
+
+async def test_list_chunks_filters_by_version_when_given(vector_store):
+    await vector_store.ensure_collection()
+    chunk_v1 = make_embedded_chunk(document_id='fz-181', chunk_index=0)
+    chunk_v2 = make_embedded_chunk(document_id='fz-181', chunk_index=0)
+    metadata_v1 = DocumentMetadataInput(
+        source_title='ФЗ-181', audience='both', topic='quota', version='2025-01-01', effective_date=date(2025, 1, 1)
+    )
+    metadata_v2 = DocumentMetadataInput(
+        source_title='ФЗ-181', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+    )
+    await vector_store.upsert_chunk(chunk_v1, metadata_v1)
+    await vector_store.upsert_chunk(chunk_v2, metadata_v2)
+
+    chunks = await vector_store.list_chunks('fz-181', version='2025-01-01')
+
+    assert len(chunks) == 1
+    assert chunks[0]['version'] == '2025-01-01'

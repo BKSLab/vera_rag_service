@@ -1,14 +1,17 @@
 import json
 from typing import Any, get_args
+from urllib.parse import urlencode
 
-from markupsafe import Markup
+from markupsafe import Markup, escape
 from pydantic import ValidationError
 from sqladmin import BaseView, ModelView, expose
 from starlette.requests import Request
 
+from app.admin.dashboard import get_dashboard_stats
 from app.admin.services import build_ingestion_service, build_search_service
 from app.db.models.document import Document
 from app.db.models.search_log import SearchLog
+from app.db.session import async_session_factory
 from app.dependencies.vectorstore import get_vector_store
 from app.exceptions.embedding import EmbeddingApiRequestError
 from app.exceptions.llm import LlmApiRequestError
@@ -82,6 +85,14 @@ class SearchLogAdmin(ModelView, model=SearchLog):
     can_delete = True
 
 
+def _document_id_link(model: Document) -> Markup:
+    """Превращает `document_id` в ссылку на просмотр чанков этой версии в
+    Qdrant (`DocumentChunksView`) — без этого нет способа увидеть реальный
+    проиндексированный текст, а не только метаданные реестра."""
+    query = urlencode({'document_id': model.document_id, 'version': model.version})
+    return Markup(f'<a href="/admin/document-chunks?{query}">{escape(model.document_id)}</a>')
+
+
 class DocumentAdmin(ModelView, model=Document):
     """Реестр документов БЗ (Этап 11.1 плана) — список/история версий +
     удаление. Создание/редактирование — только через `DocumentUploadView`
@@ -99,6 +110,8 @@ class DocumentAdmin(ModelView, model=Document):
     column_searchable_list = [Document.document_id, Document.source_title]
     column_sortable_list = [Document.document_id, Document.effective_date, Document.created_at]
     column_default_sort = [(Document.created_at, True)]
+    column_formatters = {Document.document_id: lambda model, attr: _document_id_link(model)}
+    column_formatters_detail = {Document.document_id: lambda model, attr: _document_id_link(model)}
 
     can_create = False
     can_edit = False
@@ -168,6 +181,26 @@ class DocumentUploadView(BaseView):
         return await self.templates.TemplateResponse(request, 'document_upload.html', context)
 
 
+class DocumentChunksView(BaseView):
+    """Просмотр реально проиндексированных чанков документа в Qdrant —
+    `DocumentAdmin` показывает только метаданные реестра в Postgres, не
+    сам текст/синтетический заголовок/гипотетические вопросы чанков."""
+
+    name = 'Чанки документа'
+    icon = 'fa-solid fa-list-ul'
+
+    @expose('/document-chunks', methods=['GET'])
+    async def document_chunks(self, request: Request) -> Any:
+        document_id = (request.query_params.get('document_id') or '').strip()
+        version = (request.query_params.get('version') or '').strip() or None
+        context: dict[str, Any] = {'document_id': document_id, 'version': version}
+
+        if document_id:
+            context['chunks'] = await get_vector_store().list_chunks(document_id, version=version)
+
+        return await self.templates.TemplateResponse(request, 'document_chunks.html', context)
+
+
 class SearchTestView(BaseView):
     """Интерактивное тестирование поиска через /admin (Этап 11.2 плана) —
     позволяет задать вопрос и увидеть кандидатов на каждой стадии
@@ -214,3 +247,18 @@ class SearchTestView(BaseView):
             context['error'] = str(error)
 
         return await self.templates.TemplateResponse(request, 'search_test.html', context)
+
+
+class DashboardView(BaseView):
+    """Сводный мониторинг сервиса через /admin — без неё единственный
+    способ оценить состояние БЗ и поиска — листать сырые списки построчно
+    в `DocumentAdmin`/`SearchLogAdmin` (расширение Этапа 11 плана)."""
+
+    name = 'Дашборд'
+    icon = 'fa-solid fa-gauge-high'
+
+    @expose('/dashboard', methods=['GET'])
+    async def dashboard(self, request: Request) -> Any:
+        async with async_session_factory() as db_session:
+            stats = await get_dashboard_stats(db_session, get_vector_store())
+        return await self.templates.TemplateResponse(request, 'dashboard.html', {'stats': stats})

@@ -5,7 +5,14 @@ from sqladmin import Admin
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.admin.auth import AdminLoginAuth
-from app.admin.views import DocumentAdmin, DocumentUploadView, SearchLogAdmin, SearchTestView
+from app.admin.views import (
+    DashboardView,
+    DocumentAdmin,
+    DocumentChunksView,
+    DocumentUploadView,
+    SearchLogAdmin,
+    SearchTestView,
+)
 from app.core.settings import get_settings
 
 _TEMPLATES_DIR = str(Path(__file__).parent.parent / 'templates')
@@ -26,12 +33,14 @@ def create_admin(app: FastAPI, engine: AsyncEngine) -> Admin:
         base_url='/admin',
         templates_dir=_TEMPLATES_DIR,
     )
+    admin.add_view(DashboardView)
     admin.add_view(SearchLogAdmin)
     admin.add_view(DocumentAdmin)
     # `add_view` (не `add_base_view` напрямую!) — только она проставляет
     # `_admin_ref` на класс view'а, без которого `login_required` (sqladmin)
     # тихо пропускает проверку авторизации для @expose-маршрутов BaseView.
     admin.add_view(DocumentUploadView)
+    admin.add_view(DocumentChunksView)
     admin.add_view(SearchTestView)
 
     return admin

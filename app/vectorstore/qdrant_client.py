@@ -207,3 +207,38 @@ class QdrantVectorStore:
                 break
 
         return sorted(versions)
+
+    async def list_chunks(self, document_id: str, version: str | None = None) -> list[dict]:
+        """Возвращает payload всех чанков документа — для просмотра содержимого
+        в админке (Этап 11 плана, расширение "просмотр того, что хранится").
+
+        Args:
+            document_id: Идентификатор документа.
+            version: Если задано — только чанки этой версии.
+
+        Returns:
+            Payload чанков (включая `chunk_id`), отсортированные по `chunk_index`.
+        """
+        conditions = [models.FieldCondition(key='document_id', match=models.MatchValue(value=document_id))]
+        if version is not None:
+            conditions.append(
+                models.FieldCondition(key='version', match=models.MatchValue(value=version))
+            )
+        query_filter = models.Filter(must=conditions)
+
+        chunks: list[dict] = []
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            chunks.extend({'chunk_id': str(point.id), **point.payload} for point in points)
+            if offset is None:
+                break
+
+        return sorted(chunks, key=lambda chunk: chunk.get('chunk_index', 0))

@@ -1,0 +1,57 @@
+{% extends "sqladmin/layout.html" %}
+{% block content %}
+<div class="col-12">
+  <div class="card mb-3">
+    <div class="card-header"><h3 class="card-title">Чанки документа в Qdrant</h3></div>
+    <div class="card-body border-bottom py-3">
+      <form method="GET">
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label">document_id</label>
+            <input type="text" name="document_id" class="form-control" value="{{ document_id or '' }}" required>
+          </div>
+          <div class="col-md-4 mb-3">
+            <label class="form-label">Версия (опционально)</label>
+            <input type="text" name="version" class="form-control" value="{{ version or '' }}">
+          </div>
+          <div class="col-md-2 mb-3 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary w-100">Показать</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if chunks is defined %}
+  <div class="card">
+    <div class="card-header"><h4 class="card-title">Найдено чанков: {{ chunks | length }}</h4></div>
+    <div class="card-body">
+      {% if chunks %}
+      {% for chunk in chunks %}
+      <div class="card mb-2">
+        <div class="card-header">
+          <strong>#{{ chunk.chunk_index }}</strong> — {{ chunk.synthetic_title }}
+          <span class="text-muted"> · {{ chunk.category }} · {{ chunk.audience }} · {{ chunk.topic }} · версия {{ chunk.version }}</span>
+        </div>
+        <div class="card-body">
+          <p style="white-space:pre-wrap;">{{ chunk.text }}</p>
+          {% if chunk.hypothetical_questions %}
+          <strong>Гипотетические вопросы:</strong>
+          <ul>
+            {% for question in chunk.hypothetical_questions %}
+            <li>{{ question }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+          <small class="text-muted">chunk_id: <code>{{ chunk.chunk_id }}</code></small>
+        </div>
+      </div>
+      {% endfor %}
+      {% else %}
+      <em>Чанки не найдены — проверьте document_id/версию.</em>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
