@@ -1,0 +1,128 @@
+{% extends "sqladmin/layout.html" %}
+{% block content %}
+<div class="col-12">
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">Тестирование поиска</h3>
+    </div>
+    <div class="card-body border-bottom py-3">
+      {% if error %}
+      <div class="alert alert-danger" role="alert">{{ error }}</div>
+      {% endif %}
+      <form method="POST">
+        <div class="mb-3">
+          <label class="form-label">Вопрос</label>
+          <input type="text" name="query" class="form-control" value="{{ query or '' }}"
+            placeholder="Какая квота на трудоустройство инвалидов?" required>
+        </div>
+        <div class="row">
+          <div class="col-md-4 mb-3">
+            <label class="form-label">Аудитория (опционально)</label>
+            <select name="audience" class="form-select">
+              <option value="">— любая —</option>
+              {% for audience in audiences %}
+              <option value="{{ audience }}" {% if selected_audience==audience %}selected{% endif %}>{{ audience }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4 mb-3">
+            <label class="form-label">Тема (опционально)</label>
+            <input type="text" name="topic" class="form-control" value="{{ selected_topic or '' }}" placeholder="quota">
+          </div>
+          <div class="col-md-4 mb-3">
+            <label class="form-label">Категория (опционально)</label>
+            <select name="category" class="form-select">
+              <option value="">— любая (категорийно-сбалансированный поиск) —</option>
+              {% for category in categories %}
+              <option value="{{ category }}" {% if selected_category==category %}selected{% endif %}>{{ category }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Искать</button>
+      </form>
+    </div>
+  </div>
+
+  {% if diagnostics %}
+  <div class="card mb-3">
+    <div class="card-header"><h3 class="card-title">Финальный результат (после reranker'а)</h3></div>
+    <div class="card-body">
+      {% if diagnostics.results %}
+      <table class="table table-vcenter">
+        <thead>
+          <tr><th>#</th><th>Заголовок</th><th>Источник</th><th>Категория</th><th>Аудитория</th><th>Тема</th><th>RRF score</th><th>Текст</th></tr>
+        </thead>
+        <tbody>
+          {% for chunk in diagnostics.results %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ chunk.synthetic_title }}</td>
+            <td>{{ chunk.source_title }}</td>
+            <td>{{ chunk.category }}</td>
+            <td>{{ chunk.audience }}</td>
+            <td>{{ chunk.topic }}</td>
+            <td>{{ '%.4f' | format(chunk.score) }}</td>
+            <td style="max-width:400px;white-space:pre-wrap;">{{ chunk.text }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <em>Ничего не найдено.</em>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-4">
+      <div class="card mb-3">
+        <div class="card-header"><h4 class="card-title">Dense (top-{{ diagnostics.dense | length }})</h4></div>
+        <div class="card-body">
+          <ol>
+            {% for chunk_id, score in diagnostics.dense %}
+            <li><code>{{ chunk_id[:8] }}…</code> — {{ '%.4f' | format(score) }}</li>
+            {% endfor %}
+          </ol>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card mb-3">
+        <div class="card-header"><h4 class="card-title">Sparse/BM25 (top-{{ diagnostics.sparse | length }})</h4></div>
+        <div class="card-body">
+          <ol>
+            {% for chunk_id, score in diagnostics.sparse %}
+            <li><code>{{ chunk_id[:8] }}…</code> — {{ '%.4f' | format(score) }}</li>
+            {% endfor %}
+          </ol>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card mb-3">
+        <div class="card-header"><h4 class="card-title">RRF-склейка (top-{{ diagnostics.fused | length }})</h4></div>
+        <div class="card-body">
+          <ol>
+            {% for chunk_id, score in diagnostics.fused %}
+            <li><code>{{ chunk_id[:8] }}…</code> — {{ '%.4f' | format(score) }}</li>
+            {% endfor %}
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><h4 class="card-title">Порядок reranker'а</h4></div>
+    <div class="card-body">
+      <ol>
+        {% for chunk_id in diagnostics.reranked_ids %}
+        <li><code>{{ chunk_id[:8] }}…</code></li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

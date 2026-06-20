@@ -4,7 +4,7 @@ from fastapi import Depends
 
 from app.dependencies.clients import EmbeddingClientDep, LlmClientDep, RerankerLlmClientDep
 from app.dependencies.db_session import DbSessionDep
-from app.dependencies.repositories import SearchLogRepositoryDep
+from app.dependencies.repositories import DocumentRepositoryDep, SearchLogRepositoryDep
 from app.dependencies.vectorstore import VectorStoreDep
 from app.services.documents import DocumentsService
 from app.services.health import HealthService
@@ -40,9 +40,13 @@ def get_ingestion_service(
     llm_client: LlmClientDep,
     embedding_client: EmbeddingClientDep,
     vector_store: VectorStoreDep,
+    document_repository: DocumentRepositoryDep,
 ) -> IngestionService:
     return IngestionService(
-        llm_client=llm_client, embedding_client=embedding_client, vector_store=vector_store
+        llm_client=llm_client,
+        embedding_client=embedding_client,
+        vector_store=vector_store,
+        document_repository=document_repository,
     )
 
 

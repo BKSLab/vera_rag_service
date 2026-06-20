@@ -1,0 +1,65 @@
+{% extends "sqladmin/layout.html" %}
+{% block content %}
+<div class="col-12">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Загрузка документа в базу знаний</h3>
+    </div>
+    <div class="card-body border-bottom py-3">
+      {% if error %}
+      <div class="alert alert-danger" role="alert">{{ error }}</div>
+      {% endif %}
+      {% if success %}
+      <div class="alert alert-success" role="alert">{{ success }}</div>
+      {% endif %}
+      <form method="POST" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label">Файл документа (.pdf, .md, .txt)</label>
+          <input type="file" name="file" class="form-control" required>
+        </div>
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label">document_id</label>
+            <input type="text" name="document_id" class="form-control" placeholder="fz-181-art21" required>
+          </div>
+          <div class="col-md-6 mb-3">
+            <label class="form-label">Категория</label>
+            <select name="category" class="form-select" required>
+              {% for category in categories %}
+              <option value="{{ category }}">{{ category }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Название источника</label>
+          <input type="text" name="source_title" class="form-control" placeholder="ФЗ-181, Статья 21" required>
+        </div>
+        <div class="row">
+          <div class="col-md-4 mb-3">
+            <label class="form-label">Аудитория</label>
+            <select name="audience" class="form-select" required>
+              {% for audience in audiences %}
+              <option value="{{ audience }}">{{ audience }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4 mb-3">
+            <label class="form-label">Тема</label>
+            <input type="text" name="topic" class="form-control" placeholder="quota" required>
+          </div>
+          <div class="col-md-2 mb-3">
+            <label class="form-label">Версия</label>
+            <input type="text" name="version" class="form-control" placeholder="2026-01-01" required>
+          </div>
+          <div class="col-md-2 mb-3">
+            <label class="form-label">Дата вступления в силу</label>
+            <input type="date" name="effective_date" class="form-control" required>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Загрузить и проиндексировать</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

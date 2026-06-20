@@ -1,4 +1,5 @@
 import time
+from dataclasses import dataclass
 from uuid import uuid4
 
 from app.clients.embeddings import EmbeddingClient
@@ -16,6 +17,21 @@ from app.vectorstore.qdrant_client import (
     TEXT_PAYLOAD_FIELD,
     QdrantVectorStore,
 )
+
+
+@dataclass
+class SearchDiagnostics:
+    """Полный результат поиска по стадиям (Этап 11.2 плана) — для
+    интерактивного тестирования в админке: dense/sparse top-K до фьюжна,
+    RRF-склейка, порядок reranker'а и финальный список. `search()` —
+    тонкая обёртка, возвращающая только `results`, чтобы не дублировать
+    логику между `/search` и страницей тестирования в админке."""
+
+    dense: list[tuple[str, float]]
+    sparse: list[tuple[str, float]]
+    fused: list[tuple[str, float]]
+    reranked_ids: list[str]
+    results: list[SearchResultChunk]
 
 
 class SearchService:
@@ -50,6 +66,17 @@ class SearchService:
         Raises:
             EmbeddingApiRequestError: Если эмбеддинг запроса не удался.
         """
+        diagnostics = await self.search_with_diagnostics(query, filters, top_k)
+        return diagnostics.results
+
+    async def search_with_diagnostics(
+        self, query: str, filters: SearchFilters, top_k: int
+    ) -> SearchDiagnostics:
+        """Как `search`, но возвращает промежуточные данные всех стадий
+        (Этап 11.2 плана) — нужно странице интерактивного тестирования
+        поиска в админке, которая показывает dense/sparse/RRF/rerank, не
+        только финальный список.
+        """
         request_id = str(uuid4())
 
         started_at = time.perf_counter()
@@ -71,7 +98,10 @@ class SearchService:
                 latency_hybrid_search_ms=latency_hybrid_search_ms,
                 latency_rerank_ms=0.0,
             )
-            return []
+            return SearchDiagnostics(
+                dense=hybrid_result.dense, sparse=hybrid_result.sparse, fused=hybrid_result.fused,
+                reranked_ids=[], results=[],
+            )
 
         rrf_scores = dict(hybrid_result.fused)
         candidate_ids = [chunk_id for chunk_id, _ in hybrid_result.fused]
@@ -111,7 +141,10 @@ class SearchService:
             latency_hybrid_search_ms=latency_hybrid_search_ms,
             latency_rerank_ms=latency_rerank_ms,
         )
-        return results
+        return SearchDiagnostics(
+            dense=hybrid_result.dense, sparse=hybrid_result.sparse, fused=hybrid_result.fused,
+            reranked_ids=reranked_ids, results=results,
+        )
 
     async def _save_search_log(
         self,
