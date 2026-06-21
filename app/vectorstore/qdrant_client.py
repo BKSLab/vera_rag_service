@@ -5,6 +5,7 @@ from qdrant_client import AsyncQdrantClient, models
 from app.core.config_logger import logger
 from app.models.metadata import ChunkMetadata
 from app.models.schemas import DocumentMetadataInput, EmbeddedChunk
+from app.vectorstore.sparse import SPARSE_VECTOR_NAME, text_to_sparse_vector
 
 # Гипотетических вопросов на чанк — 3–5 (ChunkEnrichmentResult, Этап 3).
 # Именованные векторы под вопросы заводятся в коллекции с запасом на
@@ -21,6 +22,15 @@ QUESTION_VECTOR_NAMES = [f'question_{i}' for i in range(MAX_HYPOTHETICAL_QUESTIO
 TEXT_PAYLOAD_FIELD = 'text'
 SYNTHETIC_TITLE_PAYLOAD_FIELD = 'synthetic_title'
 HYPOTHETICAL_QUESTIONS_PAYLOAD_FIELD = 'hypothetical_questions'
+
+# Поля payload, по которым строятся фильтры почти в каждом запросе
+# (`app/search/hybrid.py::build_qdrant_filter`, `delete_document`,
+# `get_document_versions`, `list_chunks`) — без индекса Qdrant сканирует
+# payload менее эффективно при росте коллекции (QD-1,
+# AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md). Низкая кардинальность
+# (`category` — 5 значений, `audience` — 3) — выигрыш от keyword-индекса
+# особенно заметен.
+PAYLOAD_INDEX_FIELDS = ('category', 'audience', 'document_id', 'version', 'topic')
 
 
 def build_chunk_metadata(
@@ -49,7 +59,6 @@ def build_chunk_metadata(
         chunk_index=chunk.chunk_index,
         version=document_metadata.version,
         effective_date=document_metadata.effective_date,
-        is_active=True,
     )
 
 
@@ -92,19 +101,45 @@ class QdrantVectorStore:
         self.vector_dim = vector_dim
 
     async def ensure_collection(self) -> None:
-        """Создаёт коллекцию с нужной схемой именованных векторов, если её нет."""
+        """Создаёт коллекцию с нужной схемой именованных векторов, sparse-вектором
+        BM25 и payload-индексами, если коллекции ещё нет."""
         exists = await self.client.collection_exists(self.collection_name)
         if exists:
             return
 
         logger.info('💾 Создание коллекции Qdrant: %s', self.collection_name)
+        # QD-2 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — int8-квантизация
+        # только для основного вектора `chunk` (используется в каждом поисковом
+        # запросе), не для вспомогательных `question_N` — ~4× экономия памяти
+        # при потере recall на cosine обычно <1-2%. `always_ram=True`:
+        # квантизованные векторы остаются в RAM даже если основной (полной
+        # точности) вектор уйдёт на диск — поиск использует именно их.
+        chunk_quantization_config = models.ScalarQuantization(
+            scalar=models.ScalarQuantizationConfig(type=models.ScalarType.INT8, always_ram=True)
+        )
         vectors_config = {
-            name: models.VectorParams(size=self.vector_dim, distance=models.Distance.COSINE)
+            name: models.VectorParams(
+                size=self.vector_dim,
+                distance=models.Distance.COSINE,
+                quantization_config=chunk_quantization_config if name == CHUNK_VECTOR_NAME else None,
+            )
             for name in [CHUNK_VECTOR_NAME, *QUESTION_VECTOR_NAMES]
         }
+        # Нативный sparse-вектор с IDF-модификатором — BM25-подобное
+        # ранжирование на стороне Qdrant (SEARCH-1/QD-3) вместо клиентского
+        # `rank_bm25` поверх полного scroll коллекции на каждый запрос.
+        sparse_vectors_config = {SPARSE_VECTOR_NAME: models.SparseVectorParams(modifier=models.Modifier.IDF)}
         await self.client.create_collection(
-            collection_name=self.collection_name, vectors_config=vectors_config
+            collection_name=self.collection_name,
+            vectors_config=vectors_config,
+            sparse_vectors_config=sparse_vectors_config,
         )
+        for field_name in PAYLOAD_INDEX_FIELDS:
+            await self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name=field_name,
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
         logger.info('✅ Коллекция Qdrant создана: %s', self.collection_name)
 
     async def upsert_chunk(
@@ -131,7 +166,10 @@ class QdrantVectorStore:
         for embedded_chunk in embedded_chunks:
             chunk = embedded_chunk.enriched_chunk.chunk
 
-            vector = {CHUNK_VECTOR_NAME: embedded_chunk.chunk_vector}
+            vector = {
+                CHUNK_VECTOR_NAME: embedded_chunk.chunk_vector,
+                SPARSE_VECTOR_NAME: text_to_sparse_vector(chunk.text),
+            }
             for question_vector, vector_name in zip(
                 embedded_chunk.question_vectors, QUESTION_VECTOR_NAMES, strict=False
             ):

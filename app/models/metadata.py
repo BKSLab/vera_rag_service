@@ -20,4 +20,3 @@ class ChunkMetadata(BaseModel):
     chunk_index: int = Field(..., description='Порядковый номер чанка в пределах документа.')
     version: str = Field(..., description='Дата редакции нормативного акта или ревизии статьи.')
     effective_date: date = Field(..., description='Дата вступления редакции в силу.')
-    is_active: bool = Field(True, description='Признак активной (актуальной) версии документа.')

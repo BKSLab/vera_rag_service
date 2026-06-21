@@ -5,6 +5,7 @@ from uuid import uuid4
 from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.core.config_logger import logger
+from app.core.request_context import get_request_id
 from app.core.settings import get_settings
 from app.db.models.search_log import SearchLog
 from app.exceptions.search_log import SearchLogRepositoryError
@@ -77,7 +78,12 @@ class SearchService:
         поиска в админке, которая показывает dense/sparse/RRF/rerank, не
         только финальный список.
         """
-        request_id = str(uuid4())
+        # LOG-2 — request_id из контекста HTTP-запроса (middleware,
+        # app/main.py), не генерируется заново здесь — иначе строка лога
+        # на уровне эндпоинта и запись в search_logs для одного и того же
+        # запроса получали бы два разных идентификатора. Fallback на новый
+        # uuid4, если сервис вызван не через HTTP (юнит-тесты, скрипты).
+        request_id = get_request_id() or str(uuid4())
 
         started_at = time.perf_counter()
         query_vector = await self.embedding_client.get_embedding(

@@ -7,7 +7,6 @@ from app.exceptions.search_log import SearchLogRepositoryError
 from app.models.schemas import RerankResult, SearchFilters
 from app.repositories.search_log import SearchLogRepository
 from app.services.search import SearchService
-from app.vectorstore.qdrant_client import QdrantVectorStore
 
 CHUNK_ID = '11111111-1111-1111-1111-111111111111'
 CHUNK_PAYLOAD = {

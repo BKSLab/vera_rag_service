@@ -22,6 +22,17 @@ FastAPI · Qdrant (self-hosted, векторное хранилище) · embedd
 ## Документация
 
 - [`RAG_SERVICE_PLAN.md`](RAG_SERVICE_PLAN.md) — план реализации этого сервиса по этапам
+- [`AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md`](AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — верификация технического ревью и статус доработок
+
+## Чеклист перед production-развёртыванием
+
+Операционные пункты, не закрываемые правкой кода этого репозитория (см. `AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md`):
+
+- **`YANDEX_LLM_MODEL`** — указать конкретную версионированную модель, не `/rc`-канал (release candidate может обновляться без предупреждения и менять поведение, под которое подобраны обходные пути в `LlmClient`, LLM-4).
+- **Снапшоты Qdrant** — настроить периодический вызов `POST /collections/{name}/snapshots` с выгрузкой в отдельное хранилище вне `qdrant_data`-volume (QD-5) — без этого инцидент с диском/контейнером означает полную потерю проиндексированного корпуса и повторную оплату всех LLM/embedding вызовов.
+- **`ADMIN_SESSION_HTTPS_ONLY=true`** — обязательно за HTTPS-терминирующим reverse-proxy (по умолчанию `false` для локальной разработки, ADM-7).
+- **`/metrics`** — ограничить доступ на уровне сети/firewall, эндпоинт не защищён `X-API-Key` (LOG-5).
+- **Лимит памяти Qdrant** — задать явный `deploy.resources.limits.memory` для контейнера `qdrant` в `docker-compose.yml`/манифесте оркестратора (сейчас лимит есть только у `rag_service`, у Qdrant — нет вообще, QD-2).
 
 ## Статус
 

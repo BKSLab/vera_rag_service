@@ -6,10 +6,33 @@ from app.search.prompts.reranker import RERANKER_PROMPT
 
 RERANK_TOP_N = 5
 
+# SEARCH-3 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — при
+# категорийно-сбалансированном поиске кандидатов может быть до ~40
+# (5 категорий × (top-4 dense + top-4 sparse)); без ограничения суммарная
+# длина промпта растёт пропорционально размеру чанка и числу категорий без
+# явного контроля. Полный текст не обязателен для ранжирования — начала
+# чанка достаточно, чтобы оценить релевантность запросу.
+CANDIDATE_TEXT_MAX_CHARS = 600
+
 
 def _build_candidates_prompt(query_text: str, candidates: list[tuple[str, str]]) -> str:
-    numbered = '\n\n'.join(f'[{i}] {text}' for i, (_, text) in enumerate(candidates, start=1))
-    return f'Запрос пользователя: {query_text}\n\nКандидаты:\n{numbered}'
+    """Оборачивает запрос и каждый кандидат в явные теги-разделители
+    (LLM-3/SEC-5, AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — текст
+    документов и пользовательский запрос — недоверенный вход, в котором
+    теоретически может оказаться prompt injection. Теги сами по себе не
+    защищают полностью (надёжной защиты не существует ни у одного
+    провайдера), но дают модели чёткую границу "это данные" и снижают
+    поверхность атаки в сочетании с инструкцией в `RERANKER_PROMPT`.
+
+    Текст каждого кандидата урезается до `CANDIDATE_TEXT_MAX_CHARS` (SEARCH-3)
+    — ограничивает суммарную длину промпта независимо от числа кандидатов
+    и размера чанков.
+    """
+    numbered = '\n\n'.join(
+        f'<candidate id="{i}">{text[:CANDIDATE_TEXT_MAX_CHARS]}</candidate>'
+        for i, (_, text) in enumerate(candidates, start=1)
+    )
+    return f'<user_query>{query_text}</user_query>\n\nКандидаты:\n{numbered}'
 
 
 def _map_indices_to_chunk_ids(

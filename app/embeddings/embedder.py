@@ -55,7 +55,10 @@ async def embed_chunks(
 
     Raises:
         EmbeddingApiRequestError: Если эмбеддинг хотя бы одного чанка не
-            удался после исчерпания всех retry.
+            удался после исчерпания всех retry. `return_exceptions=True`
+            (ING-4, AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — чтобы
+            сообщить, какие именно `chunk_index` не получили вектор, вместо
+            первой попавшейся ошибки из параллельного батча.
     """
     semaphore = asyncio.Semaphore(EMBEDDING_CONCURRENCY)
 
@@ -66,8 +69,19 @@ async def embed_chunks(
     logger.info(
         '🤖 Эмбеддинг %d чанков (конкурентность: %d).', len(enriched_chunks), EMBEDDING_CONCURRENCY
     )
-    embedded = await asyncio.gather(
-        *(_embed_with_limit(enriched_chunk) for enriched_chunk in enriched_chunks)
+    results = await asyncio.gather(
+        *(_embed_with_limit(enriched_chunk) for enriched_chunk in enriched_chunks), return_exceptions=True
     )
-    logger.info('✅ Эмбеддинг завершён: %d чанков.', len(embedded))
-    return list(embedded)
+
+    failed_indices = [
+        enriched_chunk.chunk.chunk_index
+        for enriched_chunk, result in zip(enriched_chunks, results, strict=True)
+        if isinstance(result, BaseException)
+    ]
+    if failed_indices:
+        logger.warning('⚠️ Эмбеддинг не удался для chunk_index=%s из %d.', failed_indices, len(enriched_chunks))
+        first_error = next(result for result in results if isinstance(result, BaseException))
+        raise first_error
+
+    logger.info('✅ Эмбеддинг завершён: %d чанков.', len(results))
+    return list(results)

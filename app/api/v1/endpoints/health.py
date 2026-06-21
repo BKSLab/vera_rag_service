@@ -37,4 +37,4 @@ async def get_health(service: HealthServiceDep) -> HealthSchema:
         return result
     except DatabaseUnavailableError as error:
         logger.exception('❌ Сервис недоступен. Детали: %s', error)
-        raise HTTPException(status_code=error.status_code, detail=error.detail)
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error

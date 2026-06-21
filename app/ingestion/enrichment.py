@@ -24,8 +24,11 @@ async def enrich_chunk(llm_client: LlmClient, chunk: Chunk) -> EnrichedChunk:
     Raises:
         LlmApiRequestError: Если все попытки запроса к LLM исчерпаны.
     """
+    # Тег-разделитель (LLM-3/SEC-5, AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md)
+    # — текст документа — недоверенный вход (готовится Expert, но риск
+    # prompt injection не зависит от текущего уровня доверия к источнику).
     result: ChunkEnrichmentResult = await llm_client.get_llm_response(
-        content=chunk.text,
+        content=f'<document_text>{chunk.text}</document_text>',
         prompt=CHUNK_ENRICHMENT_PROMPT,
         schema=ChunkEnrichmentResult,
     )
@@ -51,7 +54,11 @@ async def enrich_chunks(llm_client: LlmClient, chunks: list[Chunk]) -> list[Enri
             после исчерпания всех retry — батч не продолжается частично,
             потому что отсутствие обогащения у части корпуса важнее
             заметить на этапе ingestion, а не молча получить чанк без
-            гипотетических вопросов в индексе.
+            гипотетических вопросов в индексе (осознанное решение, см.
+            AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md, ING-4). Используем
+            `return_exceptions=True`, чтобы при отказе сообщить, какие именно
+            `chunk_index` не обогатились, а не просто первую попавшуюся
+            ошибку из параллельного батча.
     """
     semaphore = asyncio.Semaphore(ENRICHMENT_CONCURRENCY)
 
@@ -60,9 +67,16 @@ async def enrich_chunks(llm_client: LlmClient, chunks: list[Chunk]) -> list[Enri
             return await enrich_chunk(llm_client, chunk)
 
     logger.info('🤖 Обогащение %d чанков (конкурентность: %d).', len(chunks), ENRICHMENT_CONCURRENCY)
-    enriched = await asyncio.gather(*(_enrich_with_limit(chunk) for chunk in chunks))
-    logger.info('✅ Обогащение завершено: %d чанков.', len(enriched))
-    return list(enriched)
+    results = await asyncio.gather(*(_enrich_with_limit(chunk) for chunk in chunks), return_exceptions=True)
+
+    failed_indices = [chunk.chunk_index for chunk, result in zip(chunks, results, strict=True) if isinstance(result, BaseException)]
+    if failed_indices:
+        logger.warning('⚠️ Обогащение не удалось для chunk_index=%s из %d.', failed_indices, len(chunks))
+        first_error = next(result for result in results if isinstance(result, BaseException))
+        raise first_error
+
+    logger.info('✅ Обогащение завершено: %d чанков.', len(results))
+    return list(results)
 
 
 def build_embedding_text(enriched_chunk: EnrichedChunk) -> str:

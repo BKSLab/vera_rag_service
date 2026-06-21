@@ -10,6 +10,7 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from app.core.circuit_breaker import CircuitBreaker
 from app.core.config_logger import logger
 from app.exceptions.llm import (
     LlmApiRequestError,
@@ -69,6 +70,8 @@ class LlmClient:
         delay: float = DEFAULT_RETRY_DELAY,
         max_delay: float = DEFAULT_MAX_RETRY_DELAY,
         extra_payload: dict | None = None,
+        strip_markdown_artifacts: bool = False,
+        circuit_breaker: CircuitBreaker | None = None,
     ):
         """Инициализирует клиент.
 
@@ -86,6 +89,21 @@ class LlmClient:
             max_delay: Верхняя граница задержки между повторами.
             extra_payload: Провайдер-специфичные поля, добавляемые в payload
                 каждого запроса. None — без расширений.
+            strip_markdown_artifacts: Снимать markdown code fence/эмфазис
+                перед валидацией по схеме (LLM-1,
+                AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — эмпирически
+                подобранные обходные пути под капризы конкретно YandexGPT
+                (`yandexgpt/rc`), не общее свойство контракта Chat
+                Completions. По умолчанию `False`, чтобы не применять их
+                "вслепую" к ответам других провайдеров (например, Gemini
+                через Polza, используемый для reranker'а) — там эти же
+                трансформации могли бы незаметно повредить легитимный
+                контент, случайно содержащий `_`/`*` рядом с кавычкой.
+            circuit_breaker: Общий на провайдера+use-case breaker (LLM-2,
+                AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — module-level
+                singleton, переживающий конкретный HTTP-запрос (в отличие от
+                самого `LlmClient`, создаваемого per-request через DI). None
+                — без circuit breaker (как было раньше).
         """
         self.httpx_client = httpx_client
         self.model = model
@@ -98,6 +116,8 @@ class LlmClient:
         self.delay = delay
         self.max_delay = max_delay
         self.extra_payload = extra_payload or {}
+        self.strip_markdown_artifacts = strip_markdown_artifacts
+        self.circuit_breaker = circuit_breaker
 
     def _get_backoff_delay(self, attempt: int) -> float:
         """Вычисляет задержку по экспоненциальному алгоритму с джиттером."""
@@ -162,9 +182,9 @@ class LlmClient:
         Raises:
             LlmClientContentError: Если контент не прошёл валидацию схемы.
         """
-        content = _strip_json_markdown_emphasis(
-            _strip_markdown_code_fence(self._extract_content(response))
-        )
+        content = self._extract_content(response)
+        if self.strip_markdown_artifacts:
+            content = _strip_json_markdown_emphasis(_strip_markdown_code_fence(content))
         try:
             return schema.model_validate_json(content)
         except ValidationError as error:
@@ -181,8 +201,15 @@ class LlmClient:
         """Выполняет запрос к LLM с экспоненциальными повторами при любых ошибках.
 
         Raises:
-            LlmApiRequestError: Если все попытки исчерпаны без успеха.
+            LlmApiRequestError: Если все попытки исчерпаны без успеха, или
+                circuit breaker открыт (LLM-2) — провайдер уже показал
+                подряд `failure_threshold` отказов в недавнем прошлом,
+                новый цикл retry не запускается, отказ мгновенный.
         """
+        if self.circuit_breaker is not None and self.circuit_breaker.is_open():
+            logger.warning('⚡ Circuit breaker открыт — запрос к LLM пропущен без попытки.')
+            raise LlmApiRequestError(error_details='Circuit breaker открыт', request_url=self.url)
+
         last_error: Exception | None = None
 
         for attempt in range(1, self.retries + 1):
@@ -191,6 +218,8 @@ class LlmClient:
                 content = extractor(response)
                 if attempt > 1:
                     logger.info('✅ Ответ от LLM получен с %s-й попытки', attempt)
+                if self.circuit_breaker is not None:
+                    self.circuit_breaker.record_success()
                 return content
             except LlmClientContentError as error:
                 last_error = error
@@ -217,6 +246,8 @@ class LlmClient:
             '❌ Не удалось получить ответ от LLM после %d попыток. Последняя ошибка: %s',
             self.retries, last_error,
         )
+        if self.circuit_breaker is not None:
+            self.circuit_breaker.record_failure()
         raise LlmApiRequestError(error_details=str(last_error), request_url=self.url)
 
     async def get_llm_response(

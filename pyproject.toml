@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# Минимальный базовый набор (ARCH-7, AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md)
+# — намеренно не самый строгий: цель — запустить CI с чем-то рабочим сейчас,
+# не переписать весь проект под идеальный линтер за один проход.
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]  # длина строки — много кириллических docstring-комментариев, не критично
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

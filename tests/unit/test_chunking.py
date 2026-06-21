@@ -77,7 +77,7 @@ def test_chunk_document_assigns_sequential_chunk_index_across_sections():
         ),
     ]
 
-    chunks = chunk_document(sections)
+    chunks = chunk_document(sections, version='2026-01-01')
 
     chunk_indices = [chunk.chunk_index for chunk in chunks]
     assert chunk_indices == list(range(len(chunks)))
@@ -96,7 +96,7 @@ def test_chunk_document_preserves_section_metadata_on_each_chunk():
         ),
     ]
 
-    chunks = chunk_document(sections)
+    chunks = chunk_document(sections, version='2026-01-01')
 
     assert len(chunks) > 1
     for chunk in chunks:
@@ -119,7 +119,45 @@ def test_chunk_document_generates_unique_chunk_ids():
         ),
     ]
 
-    chunks = chunk_document(sections)
+    chunks = chunk_document(sections, version='2026-01-01')
 
     chunk_ids = {chunk.chunk_id for chunk in chunks}
     assert len(chunk_ids) == len(chunks)
+
+
+def test_chunk_document_is_deterministic_for_same_document_id_version_and_index():
+    """ING-1 — повторный ingestion того же document_id+version должен давать
+    те же chunk_id, чтобы Qdrant upsert перезаписывал точки, а не плодил дубли."""
+    sections = [
+        Section(
+            document_id='fz-181',
+            category='labor_code',
+            section_index=0,
+            section_number='21',
+            section_title='Статья 21',
+            text=make_words(2000),
+        ),
+    ]
+
+    first_run = chunk_document(sections, version='2026-01-01')
+    second_run = chunk_document(sections, version='2026-01-01')
+
+    assert [chunk.chunk_id for chunk in first_run] == [chunk.chunk_id for chunk in second_run]
+
+
+def test_chunk_document_generates_different_chunk_ids_for_different_versions():
+    sections = [
+        Section(
+            document_id='fz-181',
+            category='labor_code',
+            section_index=0,
+            section_number='21',
+            section_title='Статья 21',
+            text=make_words(10),
+        ),
+    ]
+
+    v1 = chunk_document(sections, version='2026-01-01')
+    v2 = chunk_document(sections, version='2026-02-01')
+
+    assert {chunk.chunk_id for chunk in v1}.isdisjoint({chunk.chunk_id for chunk in v2})

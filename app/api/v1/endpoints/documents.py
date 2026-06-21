@@ -1,10 +1,12 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 
 from app.core.config_logger import logger
+from app.core.rate_limit import limiter
+from app.dependencies.auth import VerifyApiKeyDep
 from app.dependencies.services import DocumentsServiceDep
 from app.models.schemas import DocumentDeletedResponse
 
-router = APIRouter()
+router = APIRouter(dependencies=[VerifyApiKeyDep])
 
 
 @router.delete(
@@ -19,10 +21,12 @@ router = APIRouter()
     },
     response_model=DocumentDeletedResponse,
 )
-async def delete_document(document_id: str, service: DocumentsServiceDep) -> DocumentDeletedResponse:
+@limiter.limit('20/minute')
+async def delete_document(request: Request, document_id: str, service: DocumentsServiceDep) -> DocumentDeletedResponse:
     """Удаляет документ и все его чанки из базы знаний.
 
     Args:
+        request: HTTP-запрос (нужен `slowapi` для определения IP клиента, API-2/SEC-2).
         document_id: Идентификатор документа.
         service: Сервис управления документами.
 

@@ -4,6 +4,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.metadata import Audience, Category
 
+# Верхняя граница `raw_text` одного документа (API-3,
+# AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — с запасом от объёма
+# эталонного документа плана (ТК РФ целиком — ~840K символов, раздел 3.1
+# RAG_SERVICE_PLAN.md). Без лимита один запрос мог бы запустить
+# неограниченное число платных вызовов LLM/embedding API.
+MAX_RAW_TEXT_LENGTH = 1_000_000
+
 
 class Chunk(BaseModel):
     """Чанк — единица индексации, результат Этапа 2 (иерархический чанкинг).
@@ -169,7 +176,10 @@ class IngestRequest(BaseModel):
 
     document_id: str = Field(..., min_length=1, description='Идентификатор документа.', examples=['fz-181-art21'])
     category: Category = Field(..., description='Категория источника (раздел 3 плана).')
-    raw_text: str = Field(..., min_length=1, description='Исходный текст документа (PDF/MD/TXT уже декодированы в строку).')
+    raw_text: str = Field(
+        ..., min_length=1, max_length=MAX_RAW_TEXT_LENGTH,
+        description='Исходный текст документа (PDF/MD/TXT уже декодированы в строку).',
+    )
     source_title: str = Field(..., description='Человекочитаемое название источника.')
     audience: Audience = Field(..., description='Целевая аудитория.')
     topic: str = Field(..., description='Тема документа.')
@@ -185,6 +195,13 @@ class IngestResponse(BaseModel):
     chunks_count: int = Field(..., description='Количество созданных чанков.')
     replaced_versions: list[str] = Field(
         default_factory=list, description='Версии документа, удалённые после успешного upsert новой (раздел 3 плана).'
+    )
+    not_removed_versions: list[str] = Field(
+        default_factory=list,
+        description=(
+            'Старые версии, удаление которых не удалось (ING-3) — новая версия уже '
+            'успешно проиндексирована, эти версии нужно почистить вручную через админку.'
+        ),
     )
 
 

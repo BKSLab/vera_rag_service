@@ -64,7 +64,7 @@
   </div>
 
   <div class="card">
-    <div class="card-header"><h3 class="card-title">Средняя latency поиска (по всем запросам)</h3></div>
+    <div class="card-header"><h3 class="card-title">Средняя latency поиска (за последние 24 часа)</h3></div>
     <div class="card-body">
       <table class="table table-vcenter">
         <thead><tr><th>Стадия</th><th>Средняя latency, мс</th></tr></thead>
@@ -74,6 +74,24 @@
           <tr><td>rerank</td><td>{{ '%.1f' | format(stats.avg_latency_rerank_ms) if stats.avg_latency_rerank_ms is not none else '—' }}</td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">Сверка реестра и Qdrant</h3></div>
+    <div class="card-body">
+      {% if stats.reconciliation_mismatches is none %}
+      <span class="text-muted">Пропущена (Postgres/Qdrant недоступны или слишком много активных документов).</span>
+      {% elif stats.reconciliation_mismatches | length == 0 %}
+      <span class="text-success">Расхождений не найдено — все активные версии реестра есть в Qdrant.</span>
+      {% else %}
+      <div class="alert alert-warning mb-2">Найдены версии, активные в реестре, но без чанков в Qdrant:</div>
+      <ul class="mb-0">
+        {% for document_id, version in stats.reconciliation_mismatches %}
+        <li><code>{{ document_id }}</code> (версия {{ version }})</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
     </div>
   </div>
 </div>

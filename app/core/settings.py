@@ -22,6 +22,20 @@ class AppSettings(SettingsBase):
     secret_key: SecretStr
     admin_login: str
     admin_password: SecretStr
+    admin_session_https_only: bool = False
+    """Cookie сессии админки только по HTTPS (ADM-7,
+    AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md). По умолчанию `False` —
+    локальная разработка (`hypercorn` без TLS, `docker-compose` на
+    `localhost`) иначе не смогла бы аутентифицироваться в браузере. В
+    production за HTTPS-терминирующим reverse-proxy — обязательно `True`.
+    """
+    api_key: SecretStr
+    """Единый ключ доступа к публичному REST API (`/search`, `/ingest`, `DELETE /document/{id}`).
+
+    Один статический ключ, не таблица ключей в БД — единственный документированный
+    потребитель сейчас — MCP Tools Server (раздел 5 RAG_SERVICE_PLAN.md). См.
+    AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md, ARCH-1/API-1/SEC-1.
+    """
 
 
 class DBSettings(SettingsBase):
@@ -88,6 +102,20 @@ class YandexSettings(SettingsBase):
         return f'emb://{self.yandex_folder_id}/{self.yandex_embedding_query_model}/latest'
 
 
+class SearchSettings(SettingsBase):
+    """Настройки гибридного поиска (Этап 5/5.1)."""
+
+    dense_top_k_per_category: int = 4
+    sparse_top_k_per_category: int = 4
+    """Top-K на каждую category при категорийно-сбалансированном поиске
+    (SEARCH-2, AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — выбраны как
+    компромисс без эмпирической проверки на реальном корпусе (раздел 5.1
+    плана). Вынесены в `Settings`, чтобы их можно было менять и замерять
+    без редеплоя кода, когда появится реальный корпус и набор "важных"
+    вопросов для recall@k замера.
+    """
+
+
 class PolzaSettings(SettingsBase):
     """Настройки доступа к Polza AI — OpenAI-совместимый провайдер-агрегатор,
     используется только для reranker'а (Этап 6), а не для embeddings/enrichment —
@@ -109,6 +137,7 @@ class Settings(BaseSettings):
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     yandex: YandexSettings = Field(default_factory=YandexSettings)
     polza: PolzaSettings = Field(default_factory=PolzaSettings)
+    search: SearchSettings = Field(default_factory=SearchSettings)
 
 
 @lru_cache

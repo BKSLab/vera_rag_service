@@ -2,15 +2,17 @@ from datetime import date
 from uuid import uuid4
 
 import pytest_asyncio
-from qdrant_client import AsyncQdrantClient
+from qdrant_client import AsyncQdrantClient, models
 
 from app.core.settings import get_settings
 from app.models.schemas import Chunk, DocumentMetadataInput, EmbeddedChunk, EnrichedChunk
 from app.vectorstore.qdrant_client import (
     CHUNK_VECTOR_NAME,
+    PAYLOAD_INDEX_FIELDS,
     QUESTION_VECTOR_NAMES,
     QdrantVectorStore,
 )
+from app.vectorstore.sparse import SPARSE_VECTOR_NAME
 
 VECTOR_DIM = 4
 
@@ -71,6 +73,35 @@ async def test_ensure_collection_creates_collection_with_named_vectors(vector_st
     assert vector_names == {CHUNK_VECTOR_NAME, *QUESTION_VECTOR_NAMES}
 
 
+async def test_ensure_collection_quantizes_only_chunk_vector(vector_store):
+    """QD-2 — int8-квантизация только для основного вектора, не для
+    вспомогательных вопросов."""
+    await vector_store.ensure_collection()
+
+    info = await vector_store.client.get_collection(vector_store.collection_name)
+    vectors = info.config.params.vectors
+
+    assert vectors[CHUNK_VECTOR_NAME].quantization_config is not None
+    assert vectors[QUESTION_VECTOR_NAMES[0]].quantization_config is None
+
+
+async def test_ensure_collection_creates_sparse_vector_with_idf_modifier(vector_store):
+    await vector_store.ensure_collection()
+
+    info = await vector_store.client.get_collection(vector_store.collection_name)
+
+    assert SPARSE_VECTOR_NAME in info.config.params.sparse_vectors
+    assert info.config.params.sparse_vectors[SPARSE_VECTOR_NAME].modifier == models.Modifier.IDF
+
+
+async def test_ensure_collection_creates_payload_indexes(vector_store):
+    await vector_store.ensure_collection()
+
+    info = await vector_store.client.get_collection(vector_store.collection_name)
+
+    assert set(info.payload_schema.keys()) == set(PAYLOAD_INDEX_FIELDS)
+
+
 async def test_ensure_collection_is_idempotent(vector_store):
     await vector_store.ensure_collection()
     await vector_store.ensure_collection()
@@ -100,6 +131,7 @@ async def test_upsert_chunk_makes_point_retrievable_with_metadata_payload(vector
     assert QUESTION_VECTOR_NAMES[0] in point.vector
     assert QUESTION_VECTOR_NAMES[2] in point.vector
     assert QUESTION_VECTOR_NAMES[3] not in point.vector
+    assert SPARSE_VECTOR_NAME in point.vector
 
 
 async def test_delete_document_removes_all_its_chunks(vector_store):

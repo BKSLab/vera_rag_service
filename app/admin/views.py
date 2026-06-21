@@ -7,15 +7,23 @@ from pydantic import ValidationError
 from sqladmin import BaseView, ModelView, expose
 from starlette.requests import Request
 
+from app.admin.csrf import get_or_create_csrf_token, verify_csrf_token
 from app.admin.dashboard import get_dashboard_stats
-from app.admin.services import build_ingestion_service, build_search_service
+from app.admin.services import build_documents_service, build_ingestion_service, build_search_service
+from app.core.config_logger import logger
 from app.db.models.document import Document
 from app.db.models.search_log import SearchLog
 from app.db.session import async_session_factory
 from app.dependencies.vectorstore import get_vector_store
 from app.exceptions.embedding import EmbeddingApiRequestError
+from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError
 from app.exceptions.llm import LlmApiRequestError
-from app.ingestion.extract import UnsupportedFileTypeError, extract_text_from_upload
+from app.ingestion.extract import (
+    MAX_UPLOAD_SIZE_BYTES,
+    UnsupportedFileTypeError,
+    UploadTooLargeError,
+    extract_text_from_upload,
+)
 from app.models.metadata import Audience, Category
 from app.models.schemas import DocumentMetadataInput, SearchFilters
 
@@ -37,9 +45,13 @@ def _fmt_audience(model: SearchLog, attr: str) -> Markup:
 
 
 def _fmt_json(model: SearchLog, attr: str) -> Markup:
+    """`json.dumps` экранирует только то, что нужно для валидности самой JSON-строки —
+    не HTML-спецсимволы. Значение может содержать текст реальных документов/LLM-вывод
+    (`final_response` и т.п.), поэтому перед вставкой в `<pre>` экранируем явно
+    (см. AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md, ADM-1/SEC-3 — stored XSS)."""
     value = getattr(model, attr, None)
     pretty = json.dumps(value, ensure_ascii=False, indent=2)
-    return Markup(f"<pre style='{_JSON_STYLE}'>{pretty}</pre>")
+    return Markup(f"<pre style='{_JSON_STYLE}'>{escape(pretty)}</pre>")
 
 
 class SearchLogAdmin(ModelView, model=SearchLog):
@@ -118,13 +130,29 @@ class DocumentAdmin(ModelView, model=Document):
     can_delete = True
 
     async def delete_model(self, request: Request, pk: Any) -> None:
-        """Удаление в админке — это удаление документа из БЗ целиком, не
-        просто строки реестра: убирает и чанки из Qdrant (источник правды
-        о содержимом БЗ), и саму запись (раздел 11.1 плана)."""
+        """Удаление одной строки реестра — это удаление этой версии документа
+        из БЗ целиком, не просто строки: убирает и чанки из Qdrant (источник
+        правды о содержимом БЗ), и саму запись (раздел 11.1 плана).
+
+        Через `DocumentsService.delete_document` — тот же код, что и у
+        публичного `DELETE /document/{id}` (ARCH-4,
+        AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md), не дублирующая
+        логика через `super().delete_model()` — иначе два пути удаления
+        документа расходятся в том, что каждый из них реально удаляет.
+        """
         document = await self.get_object_for_delete(pk)
-        if document is not None:
-            await get_vector_store().delete_document(document.document_id, version=document.version)
-        await super().delete_model(request, pk)
+        if document is None:
+            return
+        async with build_documents_service() as service:
+            await service.delete_document(document.document_id, version=document.version)
+        # ADM-2 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — единая
+        # учётная запись админки не различает личность, но IP+момент
+        # действия уже сокращают время расследования инцидента (например,
+        # дублирование из-за двух одновременных загрузок, ING-2).
+        logger.info(
+            '🗑️ [admin] Удаление документа %s (версия %s) через админку. IP: %s.',
+            document.document_id, document.version, request.client.host if request.client else '-',
+        )
 
 
 class DocumentUploadView(BaseView):
@@ -137,15 +165,28 @@ class DocumentUploadView(BaseView):
 
     @expose('/document-upload', methods=['GET', 'POST'])
     async def document_upload(self, request: Request) -> Any:
-        context: dict[str, Any] = {'categories': get_args(Category), 'audiences': get_args(Audience)}
+        context: dict[str, Any] = {
+            'categories': get_args(Category), 'audiences': get_args(Audience),
+            'csrf_token': get_or_create_csrf_token(request),
+        }
 
         if request.method == 'GET':
             return await self.templates.TemplateResponse(request, 'document_upload.html', context)
 
-        form = await request.form()
-        upload = form.get('file')
-
         try:
+            # Проверка `Content-Length` до парсинга формы (ADM-6/ING-7/SEC-4)
+            # — `request.form()` сам буферизует всё тело запроса в память;
+            # без этой проверки `extract_text_from_upload`'s проверка размера
+            # сработала бы только после того, как тело уже целиком прочитано.
+            content_length = request.headers.get('content-length')
+            if content_length is not None and int(content_length) > MAX_UPLOAD_SIZE_BYTES:
+                raise UploadTooLargeError(int(content_length), MAX_UPLOAD_SIZE_BYTES)
+
+            form = await request.form()
+            if not verify_csrf_token(request, form.get('csrf_token')):
+                raise ValueError('Невалидный CSRF-токен — обновите страницу и попробуйте снова.')
+
+            upload = form.get('file')
             if upload is None or not getattr(upload, 'filename', None):
                 raise ValueError('Файл не выбран.')
 
@@ -173,7 +214,7 @@ class DocumentUploadView(BaseView):
                 f"Документ «{result.document_id}» (версия {result.version}) проиндексирован: "
                 f'{result.chunks_count} чанков. Замещено версий: {len(result.replaced_versions)}.'
             )
-        except (ValueError, UnsupportedFileTypeError, ValidationError) as error:
+        except (ValueError, UnsupportedFileTypeError, ValidationError, RawTextTooLargeError, TooManyChunksError) as error:
             context['error'] = str(error)
         except (LlmApiRequestError, EmbeddingApiRequestError) as error:
             context['error'] = str(error)
@@ -214,7 +255,10 @@ class SearchTestView(BaseView):
 
     @expose('/search-test', methods=['GET', 'POST'])
     async def search_test(self, request: Request) -> Any:
-        context: dict[str, Any] = {'categories': get_args(Category), 'audiences': get_args(Audience)}
+        context: dict[str, Any] = {
+            'categories': get_args(Category), 'audiences': get_args(Audience),
+            'csrf_token': get_or_create_csrf_token(request),
+        }
 
         if request.method == 'GET':
             return await self.templates.TemplateResponse(request, 'search_test.html', context)
@@ -229,6 +273,8 @@ class SearchTestView(BaseView):
         )
 
         try:
+            if not verify_csrf_token(request, form.get('csrf_token')):
+                raise ValueError('Невалидный CSRF-токен — обновите страницу и попробуйте снова.')
             if not query:
                 raise ValueError('Введите текст запроса.')
 

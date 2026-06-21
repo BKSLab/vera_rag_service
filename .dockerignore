@@ -3,3 +3,6 @@ venv
 .git
 .db
 db.sqlite3.
+.env
+.env.*
+!.env.example

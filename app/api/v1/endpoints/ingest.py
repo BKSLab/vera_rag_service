@@ -1,12 +1,15 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from app.core.config_logger import logger
+from app.core.rate_limit import limiter
+from app.dependencies.auth import VerifyApiKeyDep
 from app.dependencies.services import IngestionServiceDep
 from app.exceptions.embedding import EmbeddingApiRequestError
+from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError
 from app.exceptions.llm import LlmApiRequestError
 from app.models.schemas import DocumentMetadataInput, IngestRequest, IngestResponse
 
-router = APIRouter()
+router = APIRouter(dependencies=[VerifyApiKeyDep])
 
 
 @router.post(
@@ -34,10 +37,12 @@ router = APIRouter()
     },
     response_model=IngestResponse,
 )
-async def ingest_document(data: IngestRequest, service: IngestionServiceDep) -> IngestResponse:
+@limiter.limit('10/minute')
+async def ingest_document(request: Request, data: IngestRequest, service: IngestionServiceDep) -> IngestResponse:
     """Индексирует документ в базе знаний.
 
     Args:
+        request: HTTP-запрос (нужен `slowapi` для определения IP клиента, API-2/SEC-2).
         data: Документ и его метаданные.
         service: Сервис ingestion.
 
@@ -61,6 +66,9 @@ async def ingest_document(data: IngestRequest, service: IngestionServiceDep) -> 
         )
         logger.info('✅ Запрос POST /ingest выполнен. document_id=%s.', data.document_id)
         return result
+    except (RawTextTooLargeError, TooManyChunksError) as error:
+        logger.warning('⚠️ Документ %s отклонён: %s', data.document_id, error)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     except (LlmApiRequestError, EmbeddingApiRequestError) as error:
         logger.exception('❌ Ошибка ingestion. document_id=%s. Детали: %s', data.document_id, error)
-        raise HTTPException(status_code=error.status_code, detail=error.detail)
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error

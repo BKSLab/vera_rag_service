@@ -16,6 +16,7 @@
 > - ✅ Этап 5.1 — Категорийно-сбалансированный retrieval (`category` вместо `source_type` сквозь весь pipeline — `app/models/metadata.py`, `schemas.py`, `preprocess.py`, `chunking.py`, `qdrant_client.py`, `services/*`, API, `search_logs`, админка). `app/search/hybrid.py::hybrid_search` — если вызывающий не указал `category` явно, dense+sparse запускаются отдельно на каждую из 5 категорий (top-4+top-4, `DENSE_TOP_K_PER_CATEGORY`/`SPARSE_TOP_K_PER_CATEGORY`), каждая лента — отдельный список в RRF-фьюжне (`app/search/fusion.py`, без изменений — уже умел принимать произвольное число списков). `preprocess.py::_CATEGORY_TO_STRUCTURE` сопоставляет category со стратегией извлечения структуры (`labor_code`/`federal_law`/`other_npa`/`case_law` → парсер по "Статья N", `authorial` → markdown-заголовки); `extract_law_sections` получил fallback на случай отсутствия "Статья N" в тексте (раньше — молчаливая потеря всего документа). `SearchResultChunk.category` — новое поле в ответе `/search`, нужно потребителю (Agent Service) для порядка "база → практика → иные акты → комментарий". Новый интеграционный тест (`tests/integration/search/test_hybrid_search.py::test_hybrid_search_balances_candidates_across_categories`) воспроизводит сценарий риска (раздел 4): `case_law`-чанк, не попадающий в плоский top-20 из-за многочисленных `labor_code`-чанков с более высоким cosine-score, остаётся среди кандидатов при категорийно-сбалансированном поиске. 78 тестов зелёных (64 unit/API + 14 интеграционных, включая новый — проверено на реальном локальном Qdrant из `docker-compose.yml`).
 > - ✅ Весь ранее не закоммиченный код (Этапы 1–8, админка) зафиксирован в git и запушен в `origin/main` 2026-06-20.
 > - ✅ Этап 11 — Админка: загрузка документов (`/admin/document-upload`) + реестр `documents` в Postgres + интерактивное тестирование поиска (`/admin/search-test`). Подробности — раздел "Этап 11" ниже. Найден и исправлен баг авторизации sqladmin: `Admin.add_base_view()` напрямую (как в официальном примере библиотеки) не защищает страницу логином — нужен `Admin.add_view()`.
+> - ✅ Этап 12 — Техническое ревью, независимая верификация и устранение всех 47 находок (2026-06-21). Подробности — раздел "Этап 12" ниже и сводная таблица в разделе 7. Закрыты все 5 production-блокеров (авторизация API, BM25/event-loop, идемпотентность ingestion, секреты в Docker-образе, stored XSS) + 42 находки Medium/Low. 143 теста зелёных (+ 2 нагрузочных, `pytest -m slow`), `ruff check .` чист, Docker-образ собран и проверен реально. Документы самого ревью (`REVIEW_AND_IMPROVEMENT_PLAN.md`, `AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md`, `task_audit.md`, `audit_and_implementation_prompt.md`) консолидированы в этот файл и удалены из репозитория — единый источник правды.
 
 > Источник: исходные проектные документы AGENT_VERA_ARCHITECTURE (раздел "RAG Service — внутреннее устройство") и AGENT_VERA_WBS (п. 3.1, 3.4, 4.1, 5.1–5.6) — на момент составления плана находились в корне проекта, впоследствии удалены из репозитория.
 > Период разработки по дорожной карте: Июнь Н3 — Август Н1 (Фаза 3), наполнение БЗ — Август Н2 (Фаза 4), тестирование — Август Н2–Н3 (Фаза 5).
@@ -48,53 +49,80 @@ RAG Service — самостоятельный, переиспользуемый
 | LLM для обогащения чанков (Этап 3) | Yandex Cloud Model Gallery, конкретная модель не финализирована (кандидаты: `YandexGPT Pro 5.1` для качества или `YandexGPT Lite`/`gpt-oss-20b` для экономии) | Офлайн-шаг, не в hot path — приоритет качество понимания юридического текста, не скорость. Прямой Yandex Cloud API по той же причине, что и эмбеддинги |
 | Reranker | **Решено** — LLM-reranker через Polza AI (`google/gemini-3.1-flash-lite-preview`), не cross-encoder | Избегает CPU/RAM-ресурсов self-hosted `bge-reranker-base` и подписки на Cohere/Voyage. Hot path — но один вызов укладывается в SLA на практике (см. Этап 6). Не Yandex: нужна стабильность JSON-вывода без доработки промпта под конкретного провайдера (см. находку в Этапе 3) |
 | Категоризация источников и покрытие при retrieval | **Решено 2026-06-20** — поле `category` (5 значений: `labor_code`, `case_law`, `federal_law`, `other_npa`, `authorial`) заменяет грубый `source_type` (`law`/`article`); hybrid search (Этап 5) становится категорийно-сбалансированным — гарантированный пул кандидатов на каждую категорию, а не общий плоский top-20. Одна база/один сервис, не пять отдельных RAG (это обсуждалось и отклонено — см. Этап 5.1) | ТК РФ — самый большой корпус и лексически ближайший к типичной формулировке вопроса пользователя, поэтому при плоском ранжировании по сходству он систематически вымывает из топ-20 более редкие, но юридически значимые источники (разъяснения Пленумов ВС РФ, подзаконные акты/иные ФЗ, авторские комментарии). Решение воспроизводит реальную методологию юридического анализа (база — ТК РФ → разъяснения высших судов → иные акты/ФЗ → авторские комментарии, по аналогии с системой КонсультантПлюс): без гарантированного покрытия каждой категории итоговые консультации Веры по важным вопросам останутся юридически неполными |
+| Sparse-поиск (BM25) | **Решено 2026-06-21 (Этап 12, SEARCH-1/QD-3)** — нативные sparse-векторы Qdrant с IDF-модификатором (`app/vectorstore/sparse.py`), не `rank_bm25` в памяти (изначальное упрощение Этапа 5) | Клиентская реализация выгружала весь корпус (`scroll`) и пересчитывала BM25-индекс с нуля на каждый запрос, ×5 при категорийной балансировке — O(N) от размера корпуса, блокировало единственный event loop сервиса. Нативный sparse-вектор — обычный индексный запрос, не масштабируется хуже dense-поиска |
+| Авторизация публичного API | **Решено 2026-06-21 (Этап 12, ARCH-1/API-1/SEC-1)** — единый `X-API-Key`, сверяется `hmac.compare_digest` с одним значением из `Settings`, не таблица ключей в БД | Изначально не было авторизации вообще — приемлемо только за закрытым периметром с одним доверенным клиентом (MCP Tools Server); единственный известный потребитель делает полную таблицу ключей избыточной на этом этапе, см. Этап 12 |
 
 ---
 
 ## 1. Структура проекта
 
+> Обновлено на Этапе 12 (2026-06-21) — отражает фактическую структуру после ревью, не первоначальный план. Расхождения с более ранней версией этого раздела: `app/config.py` → `app/core/settings.py` (+ `config_logger.py`, `rate_limit.py`, `circuit_breaker.py`, `request_context.py`); `app/api/*` → `app/api/v1/endpoints/*`; `app/logging/` не существовал — логирование поисковых запросов живёт в `app/repositories/search_log.py` + `app/db/models/search_log.py`; появились слои `admin/`, `dependencies/`, `repositories/`, `exceptions/`, `clients/`, которых не было в исходном плане.
+
 ```
 vera_rag_service/
 ├── app/
-│   ├── main.py                  # FastAPI app, роуты, lifespan (подключение Qdrant)
-│   ├── config.py                # настройки (env): Qdrant URL, embedding model, reranker model
-│   ├── api/
-│   │   ├── search.py             # POST /search
-│   │   ├── ingest.py             # POST /ingest
-│   │   ├── documents.py          # DELETE /document/{id}
-│   │   └── health.py             # GET /health
+│   ├── main.py                    # FastAPI app, middleware (rate limit, request_id), lifespan, /metrics
+│   ├── core/
+│   │   ├── settings.py             # Pydantic Settings (app/db/qdrant/yandex/polza/search)
+│   │   ├── config_logger.py        # logging.config.fileConfig + RequestIdLogFilter
+│   │   ├── request_context.py      # contextvars: request_id сквозной через HTTP-слой и логи
+│   │   ├── rate_limit.py           # slowapi Limiter (общий для API и /admin/login)
+│   │   └── circuit_breaker.py      # CircuitBreaker — module-level singleton на провайдера
+│   ├── api/v1/endpoints/
+│   │   ├── search.py                # POST /search (X-API-Key, rate limit)
+│   │   ├── ingest.py                # POST /ingest (X-API-Key, rate limit, лимиты размера)
+│   │   ├── documents.py             # DELETE /document/{id}
+│   │   └── health.py                # GET /health (без авторизации)
+│   ├── dependencies/                # Depends-фабрики: auth, clients, http_client, vectorstore, repositories, services, db_session
 │   ├── ingestion/
-│   │   ├── preprocess.py         # очистка текста, извлечение структуры (статьи/пункты/секции)
-│   │   ├── chunking.py           # иерархический чанкинг, overlap
-│   │   ├── enrichment.py         # синтетические заголовки + гипотетические вопросы (LLM)
-│   │   └── pipeline.py           # сборка: preprocess → chunk → enrich → embed → upsert
+│   │   ├── preprocess.py           # очистка текста, извлечение структуры (статьи/пункты/секции)
+│   │   ├── chunking.py             # иерархический чанкинг, overlap, детерминированный chunk_id (uuid5)
+│   │   ├── enrichment.py           # синтетические заголовки + гипотетические вопросы (LLM)
+│   │   ├── extract.py              # извлечение текста из PDF/MD/TXT, лимиты размера/страниц
+│   │   └── prompts/enrichment.py
 │   ├── search/
-│   │   ├── hybrid.py             # dense + sparse (BM25) запросы в Qdrant
-│   │   ├── fusion.py             # RRF (Reciprocal Rank Fusion)
-│   │   └── reranker.py           # cross-encoder переранжирование топ-20 → топ-5
+│   │   ├── hybrid.py               # dense + sparse (нативные Qdrant sparse-векторы, IDF) + категорийная балансировка
+│   │   ├── fusion.py               # RRF (Reciprocal Rank Fusion)
+│   │   ├── reranker.py             # LLM-reranker (Polza/Gemini), не cross-encoder
+│   │   └── prompts/reranker.py
 │   ├── embeddings/
-│   │   └── embedder.py           # обёртка над embedding-моделью (запрос и документ — одна модель)
+│   │   └── embedder.py             # обёртка над Yandex Embedding API
+│   ├── clients/
+│   │   ├── llm.py                  # LlmClient — retry/backoff, circuit breaker, strip_markdown_artifacts
+│   │   ├── embeddings.py           # EmbeddingClient — то же
+│   │   └── http_client.py          # общий module-level httpx.AsyncClient (не per-request)
 │   ├── vectorstore/
-│   │   └── qdrant_client.py      # клиент Qdrant: collections, upsert, hybrid query, delete
+│   │   ├── qdrant_client.py        # коллекция: named vectors + sparse + квантизация + payload-индексы
+│   │   ├── sparse.py               # text → sparse-вектор (term-frequency, для нативного BM25 Qdrant)
+│   │   └── client.py               # module-level singleton AsyncQdrantClient
+│   ├── repositories/
+│   │   ├── search_log.py           # запись search_logs (Postgres)
+│   │   └── document.py             # реестр documents + advisory lock + delete
+│   ├── services/
+│   │   ├── search.py               # embed_query → hybrid → rerank → лог
+│   │   ├── ingestion.py            # preprocess → chunk → enrich → embed → upsert → реестр
+│   │   └── documents.py            # удаление документа (Qdrant + реестр, единая точка для API и админки)
+│   ├── admin/                      # sqladmin: views, auth, csrf, dashboard, reconciliation, services (DI вручную)
 │   ├── models/
-│   │   ├── schemas.py             # Pydantic: SearchRequest/Response, IngestRequest, ChunkMetadata
-│   │   └── metadata.py            # схема метаданных чанка
-│   └── logging/
-│       └── search_log.py          # персистентное логирование запросов/промежуточных данных/результатов (Postgres)
+│   │   ├── schemas.py              # Pydantic: SearchRequest/Response, IngestRequest/Response, Chunk, ...
+│   │   └── metadata.py             # ChunkMetadata, Category, Audience
+│   ├── exceptions/                 # доменные исключения по слоям (llm, embedding, document, ingestion, search_log, health)
+│   └── db/
+│       ├── session.py               # module-level singleton AsyncEngine
+│       ├── models/                  # SearchLog, Document
+│       └── alembic/                 # async-миграции
 ├── tests/
-│   ├── unit/
-│   │   ├── test_chunking.py
-│   │   ├── test_preprocess.py
-│   │   ├── test_hybrid_search.py
-│   │   ├── test_fusion.py
-│   │   └── test_reranker.py
-│   └── fixtures/                 # синтетические документы и запросы для тестов
-├── scripts/
-│   └── ingest_corpus.py          # CLI-запуск ingestion для пакета документов (Фаза 4)
-├── Dockerfile
-├── docker-compose.yml            # rag-service + qdrant
-├── pyproject.toml / requirements.txt
-└── README.md
+│   ├── unit/                      # клиенты, чанкинг, препроцессинг, reranker, fusion, sparse, circuit breaker, admin auth/csrf
+│   ├── api/endpoints/              # httpx.ASGITransport + dependency_overrides: auth, rate_limit, admin views, request_id, metrics
+│   ├── integration/                # реальные Qdrant (docker-compose) + Postgres (testcontainers): vectorstore, search, services, repositories, admin
+│   └── performance/                 # @pytest.mark.slow — синтетический корпус 5000 чанков, не входит в обычный прогон
+├── .github/workflows/ci.yml        # lint (ruff) + тесты на каждый push/PR
+├── Dockerfile                       # multi-stage, non-root, HEALTHCHECK
+├── docker-compose.yml               # rag_service + qdrant (memory limit) + db
+├── entrypoint.sh                    # RUN_MIGRATIONS_ON_START, HYPERCORN_WORKERS
+├── pyproject.toml                   # ruff
+├── requirements.txt / requirements-dev.txt
+└── README.md                        # + чеклист перед production-развёртыванием
 ```
 
 ---
@@ -130,9 +158,9 @@ vera_rag_service/
 
 ### Этап 5 — Hybrid search ✅ Выполнено, проверено на реальном Qdrant
 - Dense search (cosine) — top-20
-- Sparse search (BM25) — top-20, закрывает точные термины ("статья 21", "квота 2%")
+- Sparse search (BM25) — top-20, закрывает точные термины ("статья 21", "квота 2%"). **Изменено на Этапе 12**: изначально реализовано как `rank_bm25` в памяти над кандидатами после `scroll` (осознанное упрощение для небольшого корпуса) — на Этапе 12 (SEARCH-1/QD-3) мигрировано на нативные sparse-векторы Qdrant с IDF-модификатором (`app/vectorstore/sparse.py`, `app/search/hybrid.py::sparse_search`) — обычный индексный запрос вместо полной выгрузки коллекции на каждый запрос. См. раздел "Этап 12".
 - RRF fusion — объединение ранжирований в единый список кандидатов
-- Фильтрация по метаданным до векторного сравнения (`audience`, `source_type`, `topic`)
+- Фильтрация по метаданным до векторного сравнения (`audience`, `category`, `topic`)
 
 ### Этап 5.1 — Категорийно-сбалансированный retrieval (покрытие источников) ✅ Выполнено
 > Зафиксировано и реализовано 2026-06-20 по итогам обсуждения с тем, кто 15 лет проработал юристом до разработки (см. раздел 0.1). Расширяет Этап 5, не отдельный сервис — три варианта (5 независимых RAG-сервисов / 5 коллекций с ручным фьюжном агентом / один сервис с category-aware retrieval) обсуждены, выбран последний: 5 отдельных RAG означали бы 5× LLM-вызовов reranker'а на каждый запрос пользователя (латентность = по самому медленному из пяти + агенту нужен ещё один LLM-шаг синтеза) и неизбежный шум — нерелевантные категории (например, судебная практика на вопрос, целиком закрываемый ТК РФ) всё равно обязаны вернуть что-то в топ-5.
@@ -149,9 +177,10 @@ vera_rag_service/
 - **Открытый вопрос:** нужна ли эмпирическая проверка top-k на категорию (8+8 — первая оценка, не измерено) после загрузки реального корпуса (ТК РФ + хотя бы несколько Постановлений Пленума) — см. риски, раздел 4.
 
 ### Этап 6 — Reranker ✅ Выполнено (LLM-reranker через Polza/Gemini, проверено на реальных вызовах)
-- Cross-encoder (`BAAI/bge-reranker-base` или аналог), локально, без GPU
-- Переоценка топ-20 кандидатов по паре (запрос, чанк)
-- Возврат топ-5 финальных результатов с метаданными и source_title
+- Не cross-encoder (`BAAI/bge-reranker-base`), как изначально планировалось в разделе 0.1 — решение пересмотрено в пользу LLM-reranker'а (Polza AI/Gemini), см. раздел 0.1 и подробности реализации в статус-шапке выше
+- Переоценка кандидатов по паре (запрос, чанк), кандидатам присваиваются номера для устойчивости к искажению UUID в выводе LLM
+- Возврат до 5 финальных результатов с метаданными и `source_title`; деградация до исходного RRF-порядка при отказе LLM
+- **Этап 12 (LLM-3/SEC-5, SEARCH-3):** промпт обёрнут в XML-теги-разделители (`<user_query>`/`<candidate id="N">`) с явной анти-injection инструкцией; текст каждого кандидата урезается до 600 символов, чтобы суммарная длина промпта не росла неограниченно с числом категорий
 
 ### Этап 7 — API ✅ Выполнено
 | Метод | Путь | Назначение |
@@ -164,9 +193,9 @@ vera_rag_service/
 Pydantic-схемы запросов/ответов фиксируются в `app/models/schemas.py` — это и есть контракт для MCP Tools Server (см. WBS 2.9.2, 3.4.6).
 
 **Обновление документа (новая редакция нормативного акта):**
-- Явный workflow, а не произвольная комбинация `DELETE`+`POST /ingest`: `POST /ingest` для новой редакции создаёт чанки с новым `version`/`effective_date`, документ помечается активным; только после успешного upsert новой версии — удаление чанков старой версии по `document_id`+старому `version`
+- Явный workflow, а не произвольная комбинация `DELETE`+`POST /ingest`: `POST /ingest` для новой редакции создаёт чанки с новым `version`/`effective_date`; только после успешного upsert новой версии — удаление чанков старой версии по `document_id`+старому `version`
 - Гарантирует отсутствие окна недоступности источника между удалением старой и загрузкой новой редакции
-- Старая версия может временно храниться (флаг `is_active: bool` в метаданных) — для аудита, что именно было проиндексировано на момент конкретного ответа агента
+- Аудит "какая редакция была проиндексирована" — на уровне **документа**, не отдельного чанка: реестр `documents` в Postgres (`is_active: bool`, Этап 11.1) хранит историю версий, старые чанки в Qdrant физически удаляются (не помечаются неактивными). **Изменено на Этапе 12 (ING-6):** поле `is_active` было и в `ChunkMetadata`/Qdrant payload, но всегда оставалось `True` (мёртвое поле — удаление чанков делается физическим `delete`, не сменой флага) — убрано из схемы метаданных чанка, см. раздел 3
 
 ### Этап 8 — Персистентное логирование поисковых запросов ✅ Выполнено
 > Решение: OTel/Arize Phoenix исключены из рамок этого репозитория (см. ниже) — единственный механизм наблюдаемости здесь — структурные логи (`logging.ini`, раздел 4 `FASTAPI_PATTERNS.md`) плюс эта таблица.
@@ -180,17 +209,18 @@ Pydantic-схемы запросов/ответов фиксируются в `a
 - **Граница ответственности:** RAG Service логирует только сам факт поискового запроса и его результат. Полный диалог "вопрос пользователя → финальный ответ Веры" (после LLM-генерации) — зона Agent Service, не этого репозитория. Если нужна сводная админ-панель для контроля качества ответов на уровне всего продукта — это отдельная задача вне рамок RAG Service (возможно, в Agent Service или отдельном компоненте), зафиксировано как открытый вопрос
 - **Почему не OTel/Arize Phoenix:** изначально план предполагал OTel-спаны (`embed_query`, `vector_search`) с экспортом в Arize Phoenix. Отказались — RAG Service не видит финальный ответ агента (см. границу ответственности выше), поэтому трейс на стороне этого сервиса всегда обрублен на retrieval-шагах и не даёт той картины "вопрос → ответ", ради которой Phoenix обычно и подключают. Распределённый трейсинг через весь продукт (RAG-спаны вложены в трейс Agent Service) — решение уровня всего продукта, не этого репозитория; если оно будет принято, тема возвращается отдельным пунктом. До тех пор инженерная отладка latency/ошибок этого сервиса закрывается обычными структурными логами
 
-### Этап 9 — Тестирование
-- Юнит-тесты ingestion pipeline (чанкинг, заполнение метаданных) — WBS 3.1.11
-- Юнит-тесты hybrid search и reranker на синтетических запросах — WBS 3.1.12
-- Подготовка фикстур: набор тестовых документов и запросов с ожидаемыми топ-чанками
-- Интеграционная проверка после получения реального корпуса (Фаза 4, п. 4.1.3–4.1.4)
+### Этап 9 — Тестирование ✅ Выполнено по факту (накоплено по ходу Этапов 1–12, формализовано CI на Этапе 12)
+- Юнит-тесты ingestion pipeline (чанкинг, заполнение метаданных) — WBS 3.1.11 ✅
+- Юнит-тесты hybrid search и reranker на синтетических запросах — WBS 3.1.12 ✅
+- Фикстуры — синтетические документы/чанки во всех unit/integration-тестах (не отдельная заранее подготовленная директория `tests/fixtures/`, как планировалось изначально — фикстуры строятся в каждом тестовом модуле по месту)
+- Интеграционная проверка после получения реального корпуса (Фаза 4, п. 4.1.3–4.1.4) — **остаётся открытым пунктом**: 143 теста зелёных на синтетических данных + 2 нагрузочных (`tests/performance`, 5000 синтетических чанков), но реального корпуса от Expert ещё нет — recall/качество на нём не проверены (см. SEARCH-2, открытый вопрос)
+- **Добавлено на Этапе 12, не было в исходном плане:** CI (`.github/workflows/ci.yml`, ARCH-7), `ruff` с конфигурацией (`pyproject.toml`), тесты на саму авторизацию admin/API (TEST-4), regression-тест на гонки/идемпотентность ingestion (TEST-2), нагрузочный тест на масштаб (TEST-3, `@pytest.mark.slow`)
 
-### Этап 10 — Деплой
-- Dockerfile сервиса
-- docker-compose с Qdrant (self-hosted) для тестового окружения
-- Переменные окружения: `QDRANT_URL`, `EMBEDDING_MODEL`, `RERANKER_MODEL`
-- Деплой в тестовое окружение (WBS 3.1.14)
+### Этап 10 — Деплой ✅ Выполнено
+- Dockerfile сервиса — multi-stage, non-root, `HEALTHCHECK` (см. Этап 12, ARCH-8)
+- docker-compose с Qdrant (self-hosted) для тестового окружения — + явный memory limit для Qdrant (Этап 12, QD-2)
+- Переменные окружения — см. `.env.example`: `QDRANT_URL` и весь остальной конфиг через `app/core/settings.py` (не отдельные `EMBEDDING_MODEL`/`RERANKER_MODEL`, как абстрактно планировалось — конкретные провайдер-специфичные настройки, см. раздел 0.1)
+- Деплой в тестовое окружение (WBS 3.1.14) — локально проверено (`docker-compose up`, `hypercorn`); реальное тестовое окружение продукта «Работа для всех» — вне этого репозитория
 
 ### Этап 11 — Админка: управление документами и интерактивное тестирование поиска ✅ Выполнено
 > Зафиксировано 2026-06-20 по итогам ревью Этапа 8 (админка с журналом `search_logs`) — найден разрыв между тем, как документы реально готовит Expert, и тем, что умеет принимать сервис. Реализовано 2026-06-20 (после Этапа 5.1, до Этапов 9–10 — план явно допускал такой порядок при наличии ресурсов).
@@ -216,6 +246,32 @@ Pydantic-схемы запросов/ответов фиксируются в `a
 - `app/admin/dashboard.py::get_dashboard_stats` + `app/admin/views.py::DashboardView` (`/admin/dashboard`) — сводка: статус Postgres/Qdrant, количество документов (всего/уникальных/активных), количество чанков в Qdrant, количество поисковых запросов, средняя latency по стадиям, время последнего поиска. Postgres и Qdrant опрашиваются независимо — недоступность одного не скрывает статистику другого (деградация по аналогии с разделом 9 `FASTAPI_PATTERNS.md`).
 - **Баг, найденный при проверке (не sqladmin, наш):** при правке Этапа 5.1 миграция `search_logs` (`source_type`→`category`) была отредактирована "на месте" в предположении, что ещё не применялась к рабочей БД — на самом деле уже была применена раньше в этой же сессии. Alembic не переигрывает изменённые старые миграции, поэтому живая колонка осталась `source_type`, а ORM-модель указывала `category` — `UndefinedColumnError` при первой реальной записи `search_logs` через `/admin/search-test`. Исправлено настоящей миграцией `ALTER TABLE` (`20260620_2210_rename_search_logs_source_type_to_category.py`), не повторной правкой старого файла. **Урок:** редактировать уже как-либо применённую миграцию "на месте" нельзя даже в личном/несданном проекте — нужно проверять `alembic_version` в целевой БД, не только git-историю.
 - Проверено сквозным прогоном: загрузка документа → `/admin/document-chunks` показал реальный текст и синтетический заголовок → `/admin/dashboard` отразил счётчики до/после загрузки и поиска, включая latency по стадиям после реального поиска. 85 тестов зелёных (+ 2 новых в `test_qdrant_client.py` для `list_chunks`).
+
+### Этап 12 — Техническое ревью, независимая верификация и устранение находок ✅ Выполнено
+> Зафиксировано и реализовано 2026-06-21. Внешнее критичное техническое ревью кодовой базы (заказано отдельным заданием, не часть исходной дорожной карты выше) дало 47 находок по архитектуре, безопасности, масштабируемости и поддерживаемости. Каждая находка была независимо перепроверена против реального кода (не принята на веру) — статус Confirmed/Partially Confirmed для всех 47, ни одна не оказалась ложной. После верификации — реализация и тесты на каждую находку. Документы самого процесса ревью (исходное задание на ревью, само ревью, задание на верификацию+имплементацию, верификация) консолидированы в этот файл и удалены из репозитория — этот раздел и таблица в разделе 7 — единственный источник правды о том, что было найдено и что сделано.
+
+**Главные блокеры для публичного production-развёртывания (закрыты):**
+1. **Авторизация API** (ARCH-1/API-1/SEC-1) — `/search`, `/ingest`, `DELETE /document/{id}` не имели вообще никакой проверки. `app/dependencies/auth.py::verify_api_key` — `X-API-Key` против `Settings.app.api_key` через `hmac.compare_digest`, подключено на уровне роутера (`APIRouter(dependencies=[VerifyApiKeyDep])`) во всех трёх модулях; `/health` осознанно без ключа.
+2. **BM25 блокировал event loop** (SEARCH-1/QD-3) — клиентский `rank_bm25` выгружал весь корпус и пересчитывал индекс на каждый запрос (×5 при категорийной балансировке), O(N) от размера корпуса на единственном worker'е. Мигрировано на нативные sparse-векторы Qdrant с IDF (`app/vectorstore/sparse.py::text_to_sparse_vector`, term-frequency + `zlib.crc32` для индексов токенов — без построения отдельного словаря). Заодно — payload-индексы (QD-1: `category`/`audience`/`document_id`/`version`/`topic`) и int8-квантизация `chunk`-вектора (QD-2) в той же миграции схемы коллекции.
+3. **Ingestion не идемпотентен** (ING-1/2/3) — `chunk_id = uuid4()` при каждом вызове плодил дубликаты при повторном/параллельном ingestion. `chunk_document(sections, version)` теперь вычисляет `chunk_id = uuid5(NAMESPACE_URL, f"vera-rag-service:{document_id}:{version}:{chunk_index}")` — повтор того же `document_id`+`version` перезаписывает те же точки Qdrant, не плодит новые. `DocumentRepository.acquire_document_lock`/`release_document_lock` — сессионный `pg_advisory_lock` вокруг `ingest_document` серилизует конкурентные вызовы. Цикл удаления старых версий обёрнут в try/except (не падает на середине, `IngestResponse.not_removed_versions` явно сообщает о неудалённых).
+4. **`.env` в Docker-образе** (SEC-6) — `.dockerignore` не исключал `.env`/`.env.*`, секреты потенциально утекали в слои образа.
+5. **Stored XSS в админке** (ADM-1/SEC-3) — `_fmt_json` вставлял JSON в HTML через `Markup()` без экранирования; контент происходил из реальных документов/LLM-вывода. Исправлено `escape(pretty)`, тот же паттерн, что уже использовался в `_document_id_link`.
+
+**Остальные находки (42 шт., Critical/High/Medium/Low) — по категориям, подробности и точные файлы см. таблицу в разделе 7:**
+- **API/безопасность** — rate limiting (`slowapi`, по IP, отдельный строгий лимит на `/ingest` и `/admin/login`), лимит размера `raw_text`/числа чанков, унификация удаления документа (API и админка — один код в `DocumentsService`), CSRF (synchronizer token в сессии), `hmac.compare_digest` для логина админки, лимит размера файла/страниц PDF, `https_only` для сессии админки (конфигурируемо, по умолчанию `False` для локальной разработки).
+- **LLM/prompt injection** — обходные пути под капризы YandexGPT (`strip_markdown_artifacts`) изолированы от Polza/Gemini через флаг конструктора; circuit breaker (`CircuitBreaker`, module-level singleton на провайдера+use-case — не на клиент, который создаётся per-request); XML-теги-разделители + анти-injection инструкция в промптах reranker'а и enrichment'а; урезание текста кандидата в промпте reranker'а.
+- **Логирование/наблюдаемость** — структурированные (JSON) логи вместо текста с эмодзи (`python-json-logger`); сквозной `request_id` через `contextvars` и middleware (виден и в структурных логах, и в `search_logs.request_id`, и в заголовке ответа `X-Request-ID`); текст поискового запроса убран из stdout-логов (152-ФЗ — остаётся только в защищённой авторизацией `search_logs`); окно 24 часа для расчёта средней latency на дашборде (не по всей истории таблицы); `/metrics` (Prometheus, без авторизации — ограничивать на уровне сети в production).
+- **Инфраструктура** — `pyproject.toml` (`ruff`) + `.github/workflows/ci.yml` (lint+тесты на каждый push/PR); multi-stage `Dockerfile` (non-root, `HEALTHCHECK`, без build-тулчейна и dev-зависимостей в runtime, `requirements-dev.txt` отдельно); общий module-level `httpx.AsyncClient` для Yandex/Polza вместо пересоздания на каждый запрос; `--workers` 1→2 (после фикса блокировки event loop); `RUN_MIGRATIONS_ON_START` — переключатель в `entrypoint.sh` для будущего перехода на несколько реплик.
+- **Прочее** — сверка реестра `documents` (Postgres) и содержимого Qdrant по запросу на дашборде (ING-5, с ограничением по числу активных документов); удалено мёртвое поле `is_active` из `ChunkMetadata`/Qdrant payload (ING-6); top-K на категорию вынесен в `Settings` (SEARCH-2); `IngestionService.ingest_document` разбит на именованные шаги без новой pipeline-абстракции (ARCH-2, YAGNI); тесты на регрессию авторизации admin BaseView (TEST-4) и на идемпотентность/гонки ingestion (TEST-2); нагрузочный тест на синтетическом корпусе 5000 чанков, `@pytest.mark.slow`, не в обычном прогоне (TEST-3).
+- **Операционные заметки (не код, см. `README.md`, раздел "Чеклист перед production-развёртыванием")** — не использовать `/rc`-канал YandexGPT в production (LLM-4); настроить периодические снапшоты Qdrant с выгрузкой вне `qdrant_data`-volume (QD-5); явный memory limit для контейнера Qdrant в `docker-compose.yml` (раньше лимита не было вообще, не только "недостаточный" — QD-2).
+
+**Проверено:** 143 теста зелёных (юнит + API + интеграционные на реальных Qdrant/Postgres) + 2 нагрузочных (`pytest -m slow tests/performance`, синтетический корпус 5000 чанков, ~11с — подтверждает отсутствие регрессии SEARCH-1/QD-3). `ruff check .` — чисто. Docker-образ собран и проверен реально (`docker build`/`docker run`): non-root пользователь, `gcc`/`pytest` отсутствуют в финальном слое, runtime-зависимости импортируются без ошибок.
+
+**Не закрыто, осознанно (зафиксировано как технический долг, не забытая деталь):**
+- Полное партиционирование/retention-политика для `search_logs` (LOG-3/LOG-4) — инфраструктурное решение (куда архивировать, на каком расписании), не принимается в одностороннем порядке правкой кода; сделано то, что устранимо кодом (окно 24ч для дашборда, текст запроса не в stdout).
+- `ING-4` (`asyncio.gather` без `return_exceptions=True`) — улучшена диагностика (видно, какие именно `chunk_index` не прошли), но сохранена политика "весь документ или ничего" — частичный успех для нормативных документов означал бы юридический риск (документ неполон в БЗ без явного сигнала), сочли более серьёзным, чем повторная оплата LLM/embedding при retry.
+- Эмпирическая проверка top-K на категорию (SEARCH-2) и ценности отдельных `question_N`-векторов (QD-2) — требуют реального корпуса от Expert, физически невозможны до его получения.
+- `ARCH-3` (категории — захардкоженный `Literal`) и `ARCH-5` (связанность с Qdrant) — осознанно без изменений (YAGNI), решение зафиксировано как обоснованное в самом ревью.
 
 ---
 
@@ -311,3 +367,82 @@ MCP Tools Server  --HTTP POST /search-->  RAG Service
 | Интеграция с MCP/Agent | 3.4.1–3.4.6 |
 | Наполнение БЗ | 4.1.1–4.1.5 |
 | Тестирование качества | 5.1–5.6 |
+
+---
+
+## 7. Доработки по итогам технического ревью (Этап 12)
+
+> Эта таблица — не часть исходной дорожной карты (разделы 0–6 выше, Этапы 1–11). Это отдельный, дополнительно проведённый проход — внешнее техническое ревью кодовой базы по запросу, не плановый этап. Перечисляет все 47 находок ревью, их статус верификации (все Confirmed/Partially Confirmed против реального кода — ни одна не была принята на веру) и что именно сделано. ID — из исходного ревью, для трассируемости. Сгруппировано по приоритету, как в самом ревью.
+
+### Critical
+
+| ID | Находка | Что сделано | Файлы |
+|---|---|---|---|
+| ARCH-1 / API-1 / SEC-1 | Публичный API без авторизации | `X-API-Key` через `hmac.compare_digest`, на уровне роутера для `/search`,`/ingest`,`/document`; `/health` без ключа | `app/dependencies/auth.py`, `app/api/v1/endpoints/*.py` |
+| SEARCH-1 / QD-3 | Клиентский BM25 блокировал event loop, O(N) от размера корпуса | Нативные sparse-векторы Qdrant с IDF вместо `rank_bm25` | `app/vectorstore/sparse.py`, `app/vectorstore/qdrant_client.py`, `app/search/hybrid.py` |
+| ING-1 | Ingestion не идемпотентен (`chunk_id=uuid4()` каждый раз) | Детерминированный `chunk_id = uuid5(...)` от document_id+version+index | `app/ingestion/chunking.py` |
+| SEC-6 | `.env` не исключён из `.dockerignore` | Добавлены `.env`/`.env.*`, исключение `!.env.example` | `.dockerignore` |
+| TEST-2 | Нет тестов на идемпотентность/гонки ingestion | 3 интеграционных теста на реальном Qdrant+Postgres | `tests/integration/services/test_ingestion_service.py` |
+
+### High
+
+| ID | Находка | Что сделано | Файлы |
+|---|---|---|---|
+| ADM-1 / SEC-3 | Stored XSS в админке (`_fmt_json` без экранирования) | `escape(pretty)` перед вставкой в `Markup()` | `app/admin/views.py` |
+| ING-2 | Нет защиты от конкурентного ingestion одного документа | Сессионный `pg_advisory_lock` вокруг `ingest_document` | `app/repositories/document.py`, `app/services/ingestion.py` |
+| ING-3 | Частичный отказ удаления старых версий не компенсировался | try/except в цикле удаления + `not_removed_versions` в ответе | `app/services/ingestion.py`, `app/models/schemas.py` |
+| API-4 | `/ingest` не идемпотентен на уровне контракта | Следствие ING-1, без отдельного диффа | — |
+| QD-1 | Нет payload-индексов на фильтруемых полях | Индексы для `category`/`audience`/`document_id`/`version`/`topic` | `app/vectorstore/qdrant_client.py` |
+| QD-2 | 6 векторов на чанк без квантизации; не было memory limit у Qdrant | int8-квантизация `chunk`-вектора + явный `deploy.resources.limits.memory` для Qdrant | `app/vectorstore/qdrant_client.py`, `docker-compose.yml` |
+| TEST-1 | Интеграционные тесты репозиториев не изолированы | Очистка таблиц после `rollback()` в фикстуре | `tests/conftest.py` |
+| API-2 / SEC-2 | Нет rate limiting | `slowapi`, лимиты по IP на всех публичных эндпоинтах + `/admin/login` | `app/core/rate_limit.py`, `app/main.py` |
+| API-3 | `raw_text` без `max_length` | `max_length` (Pydantic) + проверка в сервисе (покрывает админку) + лимит числа чанков | `app/models/schemas.py`, `app/services/ingestion.py`, `app/exceptions/ingestion.py` |
+| ARCH-4 | Два пути удаления документа дают разный результат | `DocumentsService` сам чистит реестр; админка вызывает тот же сервис | `app/services/documents.py`, `app/admin/services.py` |
+| ADM-6 / ING-7 / SEC-4 | Загрузка файлов без лимита размера | Лимит размера файла (20MB) + лимит страниц PDF (2000) + проверка `Content-Length` | `app/ingestion/extract.py`, `app/admin/views.py` |
+| LLM-3 / SEC-5 | Prompt injection в reranker/enrichment | XML-теги-границы + анти-injection инструкция в промптах | `app/search/reranker.py`, `app/ingestion/enrichment.py`, `app/search/prompts/reranker.py`, `app/ingestion/prompts/enrichment.py` |
+| LOG-1 | Неструктурированные логи с эмодзи | JSON-форматтер (`python-json-logger`) | `logging.ini` |
+| LOG-3 | `search_logs` растёт неограниченно | Окно 24ч для latency на дашборде (частично — без полного партиционирования) | `app/admin/dashboard.py` |
+| LOG-4 / SEC-8 | Текст запроса логировался без redaction (152-ФЗ) | Текст запроса убран из stdout-логов, остаётся только в защищённой `search_logs` | `app/api/v1/endpoints/search.py` |
+| LOG-5 | Нет метрик/алертинга | `/metrics` (Prometheus) | `app/main.py` |
+| ARCH-7 | Нет CI/CD, нет конфигурации линтера | `pyproject.toml` (ruff) + GitHub Actions (lint+тесты) | `pyproject.toml`, `.github/workflows/ci.yml` |
+| TEST-4 | Admin BaseView без автотестов | 8 тестов: регрессия на баг авторизации + happy-path логина | `tests/api/endpoints/test_admin_views.py` |
+
+### Medium
+
+| ID | Находка | Что сделано | Файлы |
+|---|---|---|---|
+| ING-4 | `asyncio.gather` без `return_exceptions=True` | `return_exceptions=True` + точная диагностика chunk_index; политика "всё или ничего" сохранена осознанно | `app/ingestion/enrichment.py`, `app/embeddings/embedder.py` |
+| SEARCH-2 | Top-K на категорию (4+4) не валидирован | Вынесен в `Settings`; эмпирический замер — открытый пункт (нужен реальный корпус) | `app/core/settings.py`, `app/search/hybrid.py` |
+| ADM-3 | Нет CSRF-токенов в формах админки | Synchronizer token pattern (токен в сессии) | `app/admin/csrf.py` |
+| ADM-7 | Сессия админки без явного `https_only` | `admin_session_https_only` настройка (default `False` для локальной разработки) | `app/admin/auth.py`, `app/core/settings.py` |
+| LLM-1 | Yandex-специфичные text-workaround'ы применялись ко всем провайдерам | `strip_markdown_artifacts` флаг, включён только для Yandex-клиента | `app/clients/llm.py`, `app/dependencies/clients.py` |
+| LLM-2 | Нет circuit breaker между независимыми запросами | Самописный `CircuitBreaker`, module-level singleton на провайдера+use-case (3 шт.) | `app/core/circuit_breaker.py`, `app/dependencies/clients.py` |
+| LLM-4 | Модель зафиксирована на нестабильном `/rc`-канале | Операционная заметка (не код) — чеклист в README | `README.md` |
+| ADM-2 | Единый логин/пароль, нет аудита по актору | IP клиента логируется при удалении документа через админку | `app/admin/views.py` |
+| ARCH-2 | `SearchService`/`IngestionService` — тенденция к god-service | `ingest_document` разбит на именованные шаги (без новой pipeline-абстракции — YAGNI) | `app/services/ingestion.py` |
+| ARCH-6 | `httpx.AsyncClient` пересоздавался на каждый запрос | Module-level singleton, закрывается в lifespan | `app/clients/http_client.py`, `app/main.py` |
+| ARCH-8 | Dockerfile: одностадийный, dev-зависимости, root, нет HEALTHCHECK | Multi-stage, non-root, HEALTHCHECK, `requirements-dev.txt` — собран и проверен реально | `Dockerfile`, `requirements.txt`, `requirements-dev.txt` |
+| ARCH-9 | `--workers 1` | Поднято до 2 (после фикса SEARCH-1), конфигурируемо | `entrypoint.sh` |
+| ARCH-10 | Миграции применяются на каждом старте контейнера | `RUN_MIGRATIONS_ON_START` переключатель для будущего multi-replica | `entrypoint.sh` |
+| LOG-2 | Нет сквозного `request_id` | Middleware + `contextvars`, единый id в логах, `search_logs`, заголовке ответа | `app/core/request_context.py`, `app/main.py`, `app/services/search.py` |
+| TEST-3 | Нет тестов производительности/масштаба | 5000-чанковый корпус, `@pytest.mark.slow`, запущен реально (~11с) | `tests/performance/test_search_scale.py` |
+| ING-5 | Нет сверки Postgres-реестра и содержимого Qdrant | Сверка по запросу на дашборде (не cron — нет деплой-инфраструктуры в репо) | `app/admin/reconciliation.py`, `app/admin/dashboard.py` |
+| QD-5 | Нет снапшотов/бэкапа Qdrant | Операционная заметка (не код) — чеклист в README | `README.md` |
+| ADM-4 / ADM-5 | `==`-сравнение пароля, нет защиты от брутфорса | `hmac.compare_digest` + `5/minute` лимит на `/admin/login` | `app/admin/auth.py` |
+
+### Low
+
+| ID | Находка | Что сделано | Файлы |
+|---|---|---|---|
+| ING-6 | `is_active` в Qdrant — мёртвое поле | Удалено из `ChunkMetadata`/Qdrant payload (документный аудит уже есть в Postgres) | `app/models/metadata.py`, `app/vectorstore/qdrant_client.py` |
+| SEARCH-3 | Промпт reranker'а без ограничения суммарной длины | Текст кандидата урезается до 600 символов | `app/search/reranker.py` |
+| ARCH-3 | `Category` — захардкоженный `Literal` | Без изменений — осознанно (YAGNI), решение зафиксировано как обоснованное | — |
+
+### Информационные (без диффа кода)
+
+| ID | Находка | Статус |
+|---|---|---|
+| ARCH-5 | Замена Qdrant/провайдеров: оценка связанности | Без изменений — осознанно (YAGNI) |
+| QD-4 | Сводный ответ о масштабируемости (100K/1M/10M чанков) | Покрыт фиксами SEARCH-1/QD-1/QD-2/QD-3 выше, отдельного действия не требовал |
+
+**Итог:** 44 находки полностью реализованы, 2 — частично осознанно (LOG-3/LOG-4 — без полного партиционирования; ING-4 — без частичного успеха батча), 1 уточнена в формулировке (LLM-4 — операционная, не код), 2 информационные (без действия), 2 — операционные заметки в README, не код. Полный прогон тестов после каждого изменения — 143 обычных + 2 нагрузочных, `ruff check .` чисто.

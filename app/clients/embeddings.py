@@ -4,6 +4,7 @@ import random
 
 import httpx
 
+from app.core.circuit_breaker import CircuitBreaker
 from app.core.config_logger import logger
 from app.exceptions.embedding import (
     EmbeddingApiRequestError,
@@ -36,6 +37,7 @@ class EmbeddingClient:
         retries: int = DEFAULT_RETRIES,
         delay: float = DEFAULT_RETRY_DELAY,
         max_delay: float = DEFAULT_MAX_RETRY_DELAY,
+        circuit_breaker: CircuitBreaker | None = None,
     ):
         """Инициализирует клиент.
 
@@ -48,6 +50,9 @@ class EmbeddingClient:
             retries: Максимальное количество попыток на один вызов.
             delay: Базовая задержка перед повтором (секунды).
             max_delay: Верхняя граница задержки между повторами.
+            circuit_breaker: Общий module-level singleton (LLM-2,
+                AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md), переживающий
+                конкретный HTTP-запрос. None — без circuit breaker.
         """
         self.httpx_client = httpx_client
         self.url = url
@@ -56,6 +61,7 @@ class EmbeddingClient:
         self.retries = retries
         self.delay = delay
         self.max_delay = max_delay
+        self.circuit_breaker = circuit_breaker
 
     def _get_backoff_delay(self, attempt: int) -> float:
         base_delay = min(self.max_delay, self.delay * (2 ** (attempt - 1)))
@@ -116,8 +122,14 @@ class EmbeddingClient:
             Вектор эмбеддинга.
 
         Raises:
-            EmbeddingApiRequestError: Если все попытки запроса исчерпаны.
+            EmbeddingApiRequestError: Если все попытки запроса исчерпаны,
+                или circuit breaker открыт (LLM-2) — провайдер уже показал
+                подряд `failure_threshold` отказов в недавнем прошлом.
         """
+        if self.circuit_breaker is not None and self.circuit_breaker.is_open():
+            logger.warning('⚡ Circuit breaker открыт — запрос к Embedding API пропущен без попытки.')
+            raise EmbeddingApiRequestError(error_details='Circuit breaker открыт', request_url=self.url)
+
         last_error: Exception | None = None
 
         for attempt in range(1, self.retries + 1):
@@ -126,6 +138,8 @@ class EmbeddingClient:
                 embedding = self._extract_embedding(response)
                 if attempt > 1:
                     logger.info('✅ Эмбеддинг получен с %s-й попытки', attempt)
+                if self.circuit_breaker is not None:
+                    self.circuit_breaker.record_success()
                 return embedding
             except EmbeddingClientContentError as error:
                 last_error = error
@@ -148,4 +162,6 @@ class EmbeddingClient:
             '❌ Не удалось получить эмбеддинг после %d попыток. Последняя ошибка: %s',
             self.retries, last_error,
         )
+        if self.circuit_breaker is not None:
+            self.circuit_breaker.record_failure()
         raise EmbeddingApiRequestError(error_details=str(last_error), request_url=self.url)

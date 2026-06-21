@@ -1,41 +1,21 @@
 import asyncio
-import re
 from dataclasses import dataclass
 from typing import get_args
 
 from qdrant_client import AsyncQdrantClient, models
-from rank_bm25 import BM25Okapi
 
 from app.core.config_logger import logger
+from app.core.settings import get_settings
 from app.models.metadata import Audience, Category
 from app.models.schemas import SearchFilters
 from app.search.fusion import rrf_fusion
-from app.vectorstore.qdrant_client import CHUNK_VECTOR_NAME, TEXT_PAYLOAD_FIELD
+from app.vectorstore.qdrant_client import CHUNK_VECTOR_NAME
+from app.vectorstore.sparse import SPARSE_VECTOR_NAME, text_to_sparse_vector
 
 DENSE_TOP_K = 20
 SPARSE_TOP_K = 20
 
-# Этап 5.1 плана: top-K на каждую category при категорийно-сбалансированном
-# поиске (см. _category_balanced_lanes). Меньше, чем DENSE_TOP_K/SPARSE_TOP_K,
-# потому что лоты на 5 категорий складываются перед RRF — суммарный объём
-# кандидатов, уходящих в LLM-reranker (Этап 6), не должен вырасти кратно
-# относительно текущего плоского top-20+20. Не измерено на реальном корпусе —
-# открытый вопрос Этапа 5.1, может потребовать пересмотра.
-DENSE_TOP_K_PER_CATEGORY = 4
-SPARSE_TOP_K_PER_CATEGORY = 4
-
 ALL_CATEGORIES: tuple[Category, ...] = get_args(Category)
-
-# Шаг постраничной выгрузки кандидатов для BM25 (Qdrant.scroll). Корпус
-# небольшой (раздел 0.1 плана), поэтому держим всех отфильтрованных
-# кандидатов в памяти, а не строим отдельный полнотекстовый индекс.
-SCROLL_BATCH_SIZE = 256
-
-_WORD_PATTERN = re.compile(r'\w+', re.UNICODE)
-
-
-def _tokenize(text: str) -> list[str]:
-    return _WORD_PATTERN.findall(text.lower())
 
 
 def _audience_match_values(audience: Audience) -> list[str]:
@@ -107,33 +87,6 @@ async def dense_search(
     return [(str(point.id), point.score) for point in result.points]
 
 
-async def _scroll_all_candidates(
-    client: AsyncQdrantClient, collection_name: str, query_filter: models.Filter | None
-) -> list[tuple[str, str]]:
-    """Выгружает все точки, прошедшие фильтр по метаданным, с их текстом.
-
-    Returns:
-        Список (chunk_id, text).
-    """
-    candidates: list[tuple[str, str]] = []
-    offset = None
-
-    while True:
-        points, offset = await client.scroll(
-            collection_name=collection_name,
-            scroll_filter=query_filter,
-            limit=SCROLL_BATCH_SIZE,
-            offset=offset,
-            with_payload=[TEXT_PAYLOAD_FIELD],
-            with_vectors=False,
-        )
-        candidates.extend((str(point.id), point.payload.get(TEXT_PAYLOAD_FIELD, '')) for point in points)
-        if offset is None:
-            break
-
-    return candidates
-
-
 async def sparse_search(
     client: AsyncQdrantClient,
     collection_name: str,
@@ -144,11 +97,10 @@ async def sparse_search(
     """Sparse-поиск (BM25) по тексту чанка — закрывает точные термины
     ("статья 21", "квота 2%"), которые dense-поиск может смазать (Этап 5).
 
-    BM25 считается в памяти над кандидатами, прошедшими фильтр по
-    метаданным — без отдельного полнотекстового индекса, оправдано только
-    для небольшого корпуса (раздел 0.1 плана). При росте корпуса до
-    десятков тысяч чанков это нужно будет заменить на нативные
-    sparse-векторы Qdrant.
+    Нативный sparse-вектор Qdrant с IDF-модификатором (SEARCH-1/QD-3,
+    AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — обычный индексный
+    запрос, как и `dense_search`, без полной выгрузки коллекции на каждый
+    вызов (раньше — `scroll` + пересчёт `rank_bm25.BM25Okapi` с нуля).
 
     Args:
         client: Клиент Qdrant.
@@ -159,19 +111,21 @@ async def sparse_search(
 
     Returns:
         Список (chunk_id, score) в порядке убывания score. Пустой список,
-        если после фильтра не осталось кандидатов.
+        если в запросе нет токенов (пустая sparse-вектор).
     """
-    candidates = await _scroll_all_candidates(client, collection_name, build_qdrant_filter(filters))
-    if not candidates:
+    query_sparse_vector = text_to_sparse_vector(query_text)
+    if not query_sparse_vector.indices:
         return []
 
-    chunk_ids = [chunk_id for chunk_id, _ in candidates]
-    tokenized_corpus = [_tokenize(text) for _, text in candidates]
-    bm25 = BM25Okapi(tokenized_corpus)
-    scores = bm25.get_scores(_tokenize(query_text))
-
-    ranked = sorted(zip(chunk_ids, scores), key=lambda item: item[1], reverse=True)
-    return ranked[:top_k]
+    result = await client.query_points(
+        collection_name=collection_name,
+        query=query_sparse_vector,
+        using=SPARSE_VECTOR_NAME,
+        query_filter=build_qdrant_filter(filters),
+        limit=top_k,
+        with_payload=False,
+    )
+    return [(str(point.id), point.score) for point in result.points]
 
 
 async def _category_balanced_lanes(
@@ -212,16 +166,27 @@ async def _category_balanced_lanes(
         for category in ALL_CATEGORIES
     ]
 
+    # SEARCH-2 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — top-K на
+    # категорию вынесен в Settings, не хардкод константой в коде: значение
+    # не измерено на реальном корпусе (раздел 5.1 плана), должно быть
+    # доступно для замера/правки без редеплоя кода.
+    search_settings = get_settings().search
     dense_lanes, sparse_lanes = await asyncio.gather(
         asyncio.gather(
             *(
-                dense_search(client, collection_name, query_vector, f, top_k=DENSE_TOP_K_PER_CATEGORY)
+                dense_search(
+                    client, collection_name, query_vector, f,
+                    top_k=search_settings.dense_top_k_per_category,
+                )
                 for f in per_category_filters
             )
         ),
         asyncio.gather(
             *(
-                sparse_search(client, collection_name, query_text, f, top_k=SPARSE_TOP_K_PER_CATEGORY)
+                sparse_search(
+                    client, collection_name, query_text, f,
+                    top_k=search_settings.sparse_top_k_per_category,
+                )
                 for f in per_category_filters
             )
         ),

@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock
 
 from app.clients.llm import LlmClient
 from app.exceptions.llm import LlmApiRequestError
-from app.search.reranker import rerank_chunks
 from app.models.schemas import RerankResult
+from app.search.reranker import CANDIDATE_TEXT_MAX_CHARS, _build_candidates_prompt, rerank_chunks
 
 
 def make_candidates(count: int = 5) -> list[tuple[str, str]]:
@@ -67,3 +67,14 @@ async def test_rerank_chunks_falls_back_when_llm_returns_no_valid_indices():
     result = await rerank_chunks(llm_client, 'запрос', candidates, top_n=2)
 
     assert result == ['chunk-0', 'chunk-1']
+
+
+def test_build_candidates_prompt_truncates_long_candidate_text():
+    """SEARCH-3 — суммарная длина промпта не должна расти неограниченно
+    с размером чанка/числом категорий."""
+    candidates = [('chunk-0', 'а' * (CANDIDATE_TEXT_MAX_CHARS + 500))]
+
+    prompt = _build_candidates_prompt('запрос', candidates)
+
+    assert 'а' * (CANDIDATE_TEXT_MAX_CHARS + 1) not in prompt
+    assert 'а' * CANDIDATE_TEXT_MAX_CHARS in prompt

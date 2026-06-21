@@ -1,6 +1,18 @@
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from app.models.schemas import Chunk, Section
+
+# Неймспейс для детерминированных chunk_id (ING-1,
+# AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — `chunk_id` вычисляется из
+# (document_id, version, chunk_index), не генерируется случайно при каждом
+# вызове. Повторный ingestion того же document_id+version естественным
+# образом перезапишет те же точки Qdrant (upsert по тому же id), а не
+# создаст дубликаты.
+_CHUNK_ID_NAMESPACE = 'vera-rag-service'
+
+
+def _deterministic_chunk_id(document_id: str, version: str, chunk_index: int) -> str:
+    return str(uuid5(NAMESPACE_URL, f'{_CHUNK_ID_NAMESPACE}:{document_id}:{version}:{chunk_index}'))
 
 # Оценка токенов по эвристике "1 токен ~ 4 символа русского текста"
 # (RAG_SERVICE_PLAN.md, раздел 3.1) — без подключения токенизатора
@@ -81,7 +93,7 @@ def chunk_text(
     return chunks
 
 
-def chunk_document(sections: list[Section]) -> list[Chunk]:
+def chunk_document(sections: list[Section], version: str) -> list[Chunk]:
     """Разбивает все секции документа на чанки (Этап 2 плана).
 
     `chunk_index` — сквозной по всему документу, а не по отдельной секции,
@@ -89,6 +101,9 @@ def chunk_document(sections: list[Section]) -> list[Chunk]:
 
     Args:
         sections: Секции документа — результат Этапа 1 (препроцессинг).
+        version: Версия документа (ING-1) — часть детерминированного
+            `chunk_id`, чтобы повторный ingestion той же версии перезаписывал
+            те же точки Qdrant, а не плодил дубликаты.
 
     Returns:
         Список чанков со сквозной нумерацией и метаданными секции-источника.
@@ -100,7 +115,7 @@ def chunk_document(sections: list[Section]) -> list[Chunk]:
         for chunk_text_value in chunk_text(section.text):
             chunks.append(
                 Chunk(
-                    chunk_id=str(uuid4()),
+                    chunk_id=_deterministic_chunk_id(section.document_id, version, chunk_index),
                     chunk_index=chunk_index,
                     document_id=section.document_id,
                     category=section.category,

@@ -45,7 +45,7 @@ async def test_enrich_chunk_passes_chunk_text_and_schema_to_llm_client():
     await enrich_chunk(llm_client, chunk)
 
     _, call_kwargs = llm_client.get_llm_response.call_args
-    assert call_kwargs['content'] == 'Конкретный текст статьи закона.'
+    assert call_kwargs['content'] == '<document_text>Конкретный текст статьи закона.</document_text>'
     assert call_kwargs['schema'] is ChunkEnrichmentResult
 
 
@@ -66,7 +66,7 @@ async def test_enrich_chunks_preserves_order_for_multiple_chunks():
     assert len(enriched) == 7
     for i, enriched_chunk in enumerate(enriched):
         assert enriched_chunk.chunk.chunk_index == i
-        assert enriched_chunk.synthetic_title == f'Заголовок для: Текст {i}'
+        assert enriched_chunk.synthetic_title == f'Заголовок для: <document_text>Текст {i}</document_text>'
 
 
 def test_build_embedding_text_combines_title_and_chunk_text():

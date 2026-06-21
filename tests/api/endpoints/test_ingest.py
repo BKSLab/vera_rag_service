@@ -4,9 +4,10 @@ from httpx import AsyncClient
 
 from app.dependencies.services import get_ingestion_service
 from app.exceptions.embedding import EmbeddingApiRequestError
+from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError
 from app.exceptions.llm import LlmApiRequestError
 from app.main import app
-from app.models.schemas import IngestResponse
+from app.models.schemas import MAX_RAW_TEXT_LENGTH, IngestResponse
 from app.services.ingestion import IngestionService
 
 VALID_PAYLOAD = {
@@ -40,6 +41,38 @@ async def test_ingest_document_returns_422_when_category_invalid(async_client: A
     payload = {**VALID_PAYLOAD, 'category': 'video'}
 
     response = await async_client.post('/api/v1/ingest', json=payload)
+
+    assert response.status_code == 422
+
+
+async def test_ingest_document_returns_422_when_raw_text_exceeds_max_length(async_client: AsyncClient):
+    payload = {**VALID_PAYLOAD, 'raw_text': 'a' * (MAX_RAW_TEXT_LENGTH + 1)}
+
+    response = await async_client.post('/api/v1/ingest', json=payload)
+
+    assert response.status_code == 422
+
+
+async def test_ingest_document_returns_422_when_too_many_chunks(async_client: AsyncClient):
+    fake_service = AsyncMock(spec=IngestionService)
+    fake_service.ingest_document.side_effect = TooManyChunksError(
+        document_id='fz-181-art21', chunks_count=2500, max_chunks=2000
+    )
+    app.dependency_overrides[get_ingestion_service] = lambda: fake_service
+
+    response = await async_client.post('/api/v1/ingest', json=VALID_PAYLOAD)
+
+    assert response.status_code == 422
+
+
+async def test_ingest_document_returns_422_when_raw_text_too_large_raised_by_service(async_client: AsyncClient):
+    fake_service = AsyncMock(spec=IngestionService)
+    fake_service.ingest_document.side_effect = RawTextTooLargeError(
+        document_id='fz-181-art21', length=2_000_000, max_length=MAX_RAW_TEXT_LENGTH
+    )
+    app.dependency_overrides[get_ingestion_service] = lambda: fake_service
+
+    response = await async_client.post('/api/v1/ingest', json=VALID_PAYLOAD)
 
     assert response.status_code == 422
 

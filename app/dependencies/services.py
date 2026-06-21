@@ -53,8 +53,10 @@ def get_ingestion_service(
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 
 
-def get_documents_service(vector_store: VectorStoreDep) -> DocumentsService:
-    return DocumentsService(vector_store=vector_store)
+def get_documents_service(
+    vector_store: VectorStoreDep, document_repository: DocumentRepositoryDep
+) -> DocumentsService:
+    return DocumentsService(vector_store=vector_store, document_repository=document_repository)
 
 
 DocumentsServiceDep = Annotated[DocumentsService, Depends(get_documents_service)]

@@ -30,8 +30,19 @@ async def engine(postgres_container):
 
 @pytest_asyncio.fixture
 async def db_session(engine):
-    """Сессия на отдельный тест с rollback после — тесты не видят данные друг друга."""
+    """Сессия на отдельный тест.
+
+    `rollback()` после теста не освобождает от изоляции сам по себе — репозитории
+    (`SearchLogRepository`/`DocumentRepository`) вызывают `commit()` внутри своих
+    методов, и `rollback()` откатывает только то, что произошло после последнего
+    commit (то есть ничего). Поэтому после rollback дополнительно очищаем все
+    таблицы — иначе тесты в одном прогоне делят закоммиченные строки друг друга
+    (см. AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md, TEST-1).
+    """
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         yield session
         await session.rollback()
+    async with engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(table.delete())

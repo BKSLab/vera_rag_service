@@ -24,6 +24,17 @@ services:
     ports:
       - "6333:6333"
       - "6334:6334"
+    deploy:
+      resources:
+        limits:
+          # QD-2 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — раньше у
+          # Qdrant не было лимита памяти вообще (лимит 2GB ниже относится
+          # только к rag_service) — без него контролируемый OOM в
+          # контейнере при превышении заменялся бы риском для всего хоста.
+          # 4GB — с запасом по математике плана для масштаба ~100К чанков
+          # (раздел "Найденные проблемы", QD-2/QD-4); пересмотреть при
+          # росте корпуса на порядок.
+          memory: 4GB
 
   rag_service:
     container_name: vera_rag_service

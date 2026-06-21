@@ -28,7 +28,10 @@ def create_admin(app: FastAPI, engine: AsyncEngine) -> Admin:
     admin = Admin(
         app=app,
         engine=engine,
-        authentication_backend=AdminLoginAuth(secret_key=settings.app.secret_key.get_secret_value()),
+        authentication_backend=AdminLoginAuth(
+            secret_key=settings.app.secret_key.get_secret_value(),
+            https_only=settings.app.admin_session_https_only,
+        ),
         title='Vera RAG Service — Admin',
         base_url='/admin',
         templates_dir=_TEMPLATES_DIR,
