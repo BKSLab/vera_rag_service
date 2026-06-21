@@ -1,6 +1,8 @@
 from contextlib import contextmanager
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
+import docx
 import pytest
 
 from app.ingestion.extract import (
@@ -10,6 +12,20 @@ from app.ingestion.extract import (
     UploadTooLargeError,
     extract_text_from_upload,
 )
+
+
+def make_docx_bytes(paragraphs: list[str], table_rows: list[tuple[str, str]] | None = None) -> bytes:
+    document = docx.Document()
+    for paragraph_text in paragraphs:
+        document.add_paragraph(paragraph_text)
+    if table_rows:
+        table = document.add_table(rows=len(table_rows), cols=2)
+        for row, (left, right) in zip(table.rows, table_rows, strict=True):
+            row.cells[0].text = left
+            row.cells[1].text = right
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 
 def test_extract_text_from_upload_decodes_txt():
@@ -26,7 +42,7 @@ def test_extract_text_from_upload_decodes_md():
 
 def test_extract_text_from_upload_raises_on_unsupported_extension():
     with pytest.raises(UnsupportedFileTypeError):
-        extract_text_from_upload('doc.docx', b'irrelevant')
+        extract_text_from_upload('doc.rtf', b'irrelevant')
 
 
 def test_extract_text_from_upload_raises_when_file_too_large():
@@ -36,6 +52,27 @@ def test_extract_text_from_upload_raises_when_file_too_large():
 
     with pytest.raises(UploadTooLargeError):
         extract_text_from_upload('doc.txt', oversized_content)
+
+
+def test_extract_text_from_upload_decodes_docx_paragraphs_preserving_line_breaks():
+    """Перенесено из FileTextParser (docx_format_handler.py) — текст параграфов
+    в исходном порядке. Важно: переносы строк между параграфами сохраняются
+    (не схлопываются в одну строку, как в исходной реализации) — иначе
+    `preprocess_document` не найдёт "Статья N" в начале строки."""
+    content = make_docx_bytes(['Первый параграф.', 'Статья 21. Квотирование рабочих мест', 'Текст статьи.'])
+
+    result = extract_text_from_upload('doc.docx', content)
+
+    assert result.splitlines() == ['Первый параграф.', 'Статья 21. Квотирование рабочих мест', 'Текст статьи.']
+
+
+def test_extract_text_from_upload_decodes_docx_table_cells():
+    content = make_docx_bytes(['Текст до таблицы.'], table_rows=[('Ячейка 1', 'Ячейка 2')])
+
+    result = extract_text_from_upload('doc.docx', content)
+
+    assert 'Ячейка 1' in result
+    assert 'Ячейка 2' in result
 
 
 def test_extract_text_from_upload_raises_when_pdf_has_too_many_pages():

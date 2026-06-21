@@ -1,7 +1,11 @@
 from io import BytesIO
 from pathlib import Path
 
+import docx
 import pdfplumber
+from docx.document import Document
+from lxml import etree
+from lxml.etree import ElementTree, _Element
 
 # ADM-6/ING-7/SEC-4 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — без
 # лимитов загрузка одного файла могла бы потребовать неограниченной памяти
@@ -17,7 +21,7 @@ class UnsupportedFileTypeError(ValueError):
 
     def __init__(self, suffix: str):
         self.suffix = suffix
-        super().__init__(f"Неподдерживаемый тип файла: {suffix!r}. Допустимо: .pdf, .md, .txt.")
+        super().__init__(f"Неподдерживаемый тип файла: {suffix!r}. Допустимо: .pdf, .docx, .md, .txt.")
 
 
 class UploadTooLargeError(ValueError):
@@ -38,9 +42,92 @@ class TooManyPdfPagesError(ValueError):
         super().__init__(f'PDF содержит {pages} страниц — лимит {max_pages}.')
 
 
+def _extract_hyperlink_text(hyperlink_element: _Element) -> str:
+    return ''.join(
+        text_node.text or ''
+        for text_node in ElementTree(hyperlink_element).xpath('.//w:t', namespaces=hyperlink_element.nsmap)
+    )
+
+
+def _extract_paragraph_text(paragraph_element: _Element, document: Document) -> str:
+    """Текст параграфа .docx, включая гиперссылки, в исходном порядке.
+
+    Изображения (`a:blip` внутри `w:r` без текста) намеренно пропускаются —
+    без OCR. Перенесено из `FileTextParser` (`docx_format_handler.py`) без
+    извлечения текста с картинок — там это делалось через LLM Vision,
+    здесь не нужно (см. AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md, обсуждение
+    с пользователем 2026-06-21).
+    """
+    paragraph = docx.text.paragraph.Paragraph(paragraph_element, document)
+    runs_and_hyperlinks: list[_Element] = ElementTree(paragraph_element).xpath(
+        './w:r | ./w:hyperlink', namespaces=paragraph_element.nsmap
+    )
+
+    text = ''
+    for element in runs_and_hyperlinks:
+        tag = element.tag.split('}')[-1]
+        if tag == 'hyperlink':
+            text += _extract_hyperlink_text(element)
+        else:
+            text += docx.text.run.Run(element, paragraph).text or ''
+    return text
+
+
+def _extract_table_text(table_element: _Element, document: Document) -> str:
+    """Текст таблицы .docx — построчно, по ячейкам, как отдельные строки."""
+    lines: list[str] = []
+    for row in table_element.xpath('.//w:tr'):
+        for cell in row.xpath('.//w:tc'):
+            for child in cell.iterchildren():
+                if child.tag.split('}')[-1] == 'p':
+                    paragraph_text = _extract_paragraph_text(child, document)
+                    if paragraph_text:
+                        lines.append(paragraph_text)
+    return '\n'.join(lines)
+
+
+def _extract_section_headers_footers_text(section_element: _Element, document: Document) -> str:
+    """Текст верхних/нижних колонтитулов секции .docx."""
+    lines: list[str] = []
+    for ref_tag in ('headerReference', 'footerReference'):
+        for ref in section_element.xpath(f'.//w:{ref_tag}'):
+            part = document.part.related_parts[ref.rId]
+            part_tree: _Element = etree.fromstring(part.blob)
+            for paragraph in part_tree.xpath('.//w:p', namespaces=part_tree.nsmap):
+                text = ''.join(
+                    t.text or '' for t in paragraph.xpath('.//w:t', namespaces=paragraph.nsmap)
+                )
+                if text:
+                    lines.append(text)
+    return '\n'.join(lines)
+
+
+def extract_text_from_docx(content: bytes) -> str:
+    """Извлекает текст из .docx, сохраняя порядок параграфов/таблиц/колонтитулов
+    и переносы строк между ними (важно: `preprocess_document` ищет "Статья N"
+    в начале строки — текст не схлопывается в одну строку, в отличие от
+    исходной реализации в `FileTextParser`).
+    """
+    document = docx.Document(BytesIO(content))
+    blocks: list[str] = []
+    for block in document.element.body.iterchildren():
+        tag = block.tag.split('}')[-1]
+        if tag == 'p':
+            text = _extract_paragraph_text(block, document)
+        elif tag == 'tbl':
+            text = _extract_table_text(block, document)
+        elif tag == 'sectPr':
+            text = _extract_section_headers_footers_text(block, document)
+        else:
+            continue
+        if text:
+            blocks.append(text)
+    return '\n'.join(blocks)
+
+
 def extract_text_from_upload(filename: str, content: bytes) -> str:
-    """Декодирует загруженный файл (PDF/MD/TXT) в текст — шаг перед препроцессингом
-    (Этап 1), который ожидает на входе уже декодированную строку.
+    """Декодирует загруженный файл (PDF/DOCX/MD/TXT) в текст — шаг перед
+    препроцессингом (Этап 1), который ожидает на входе уже декодированную строку.
 
     Args:
         filename: Имя загруженного файла — расширение определяет способ извлечения.
@@ -50,7 +137,7 @@ def extract_text_from_upload(filename: str, content: bytes) -> str:
         Извлечённый текст документа.
 
     Raises:
-        UnsupportedFileTypeError: Если расширение файла не .pdf/.md/.txt.
+        UnsupportedFileTypeError: Если расширение файла не .pdf/.docx/.md/.txt.
         UploadTooLargeError: Если файл превышает `MAX_UPLOAD_SIZE_BYTES`.
         TooManyPdfPagesError: Если PDF содержит больше `MAX_PDF_PAGES` страниц.
     """
@@ -61,6 +148,9 @@ def extract_text_from_upload(filename: str, content: bytes) -> str:
 
     if suffix in ('.md', '.txt'):
         return content.decode('utf-8')
+
+    if suffix == '.docx':
+        return extract_text_from_docx(content)
 
     if suffix == '.pdf':
         with pdfplumber.open(BytesIO(content)) as pdf:
