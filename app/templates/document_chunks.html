@@ -40,12 +40,29 @@
     <div class="card-body">
       {% if chunks %}
       {% for chunk in chunks %}
-      <div class="card mb-2">
-        <div class="card-header">
-          <strong>#{{ chunk.chunk_index }}</strong> — {{ chunk.synthetic_title }}
-          <span class="text-muted"> · {{ chunk.category }} · {{ chunk.audience }} · {{ chunk.topic }} · версия {{ chunk.version }}</span>
+      <div class="card mb-2 {% if chunk.is_actual == false %}border-warning{% endif %}">
+        <div class="card-header d-flex align-items-center gap-2">
+          <strong>#{{ chunk.chunk_index }}</strong>
+          {% if chunk.is_actual == false %}
+          <span class="badge bg-warning text-dark">устарел</span>
+          {% else %}
+          <span class="badge bg-success">актуален</span>
+          {% endif %}
+          <span>{{ chunk.synthetic_title }}</span>
+          <span class="text-muted ms-auto"> {{ chunk.category }} · {{ chunk.audience }} · {{ chunk.topic }} · v{{ chunk.version }}</span>
         </div>
         <div class="card-body">
+          {% if chunk.section_number %}
+          <div class="mb-2">
+            <span class="badge bg-blue-lt">{{ chunk.section_number }}{% if chunk.section_title %} — {{ chunk.section_title }}{% endif %}</span>
+            <small class="text-muted ms-2">parent_id: <code>{{ chunk.parent_id }}</code> · чанк №{{ chunk.chunk_number_in_section }} в секции</small>
+          </div>
+          {% endif %}
+          {% if chunk.effective_until %}
+          <div class="alert alert-warning py-1 mb-2" style="font-size:0.85em;">
+            Действовала до {{ chunk.effective_until }}
+          </div>
+          {% endif %}
           <p style="white-space:pre-wrap;">{{ chunk.text }}</p>
           {% if chunk.hypothetical_questions %}
           <strong>Гипотетические вопросы:</strong>
