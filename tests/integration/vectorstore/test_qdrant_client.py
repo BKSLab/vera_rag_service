@@ -8,7 +8,8 @@ from app.core.settings import get_settings
 from app.models.schemas import Chunk, DocumentMetadataInput, EmbeddedChunk, EnrichedChunk
 from app.vectorstore.qdrant_client import (
     CHUNK_VECTOR_NAME,
-    PAYLOAD_INDEX_FIELDS,
+    PAYLOAD_INDEX_BOOL_FIELDS,
+    PAYLOAD_INDEX_KEYWORD_FIELDS,
     QUESTION_VECTOR_NAMES,
     QdrantVectorStore,
 )
@@ -35,7 +36,9 @@ def make_embedded_chunk(document_id: str = 'fz-181', chunk_index: int = 0, quest
     chunk = Chunk(
         chunk_id=str(uuid4()),
         chunk_index=chunk_index,
+        chunk_number_in_section=chunk_index,
         document_id=document_id,
+        parent_id=f'{document_id}:21',
         category='labor_code',
         section_index=0,
         section_number='21',
@@ -99,7 +102,8 @@ async def test_ensure_collection_creates_payload_indexes(vector_store):
 
     info = await vector_store.client.get_collection(vector_store.collection_name)
 
-    assert set(info.payload_schema.keys()) == set(PAYLOAD_INDEX_FIELDS)
+    expected_fields = set(PAYLOAD_INDEX_KEYWORD_FIELDS) | set(PAYLOAD_INDEX_BOOL_FIELDS)
+    assert set(info.payload_schema.keys()) == expected_fields
 
 
 async def test_ensure_collection_is_idempotent(vector_store):

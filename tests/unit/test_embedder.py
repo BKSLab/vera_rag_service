@@ -9,7 +9,9 @@ def make_enriched_chunk(chunk_index: int = 0, questions: int = 3) -> EnrichedChu
     chunk = Chunk(
         chunk_id=f'chunk-{chunk_index}',
         chunk_index=chunk_index,
+        chunk_number_in_section=0,
         document_id='fz-181',
+        parent_id='fz-181:21',
         category='labor_code',
         section_index=0,
         section_number='21',

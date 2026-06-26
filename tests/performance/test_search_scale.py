@@ -26,7 +26,8 @@ UPSERT_BATCH_SIZE = 500
 
 def make_embedded_chunk(index: int) -> EmbeddedChunk:
     chunk = Chunk(
-        chunk_id=str(uuid4()), chunk_index=index, document_id='tk-rf', category='labor_code',
+        chunk_id=str(uuid4()), chunk_index=index, chunk_number_in_section=0,
+        document_id='tk-rf', parent_id=f'tk-rf:{index}', category='labor_code',
         section_index=0, section_number=str(index), section_title=f'Статья {index}',
         text=f'Норма трудового кодекса номер {index} о трудоустройстве и правах работников.',
     )

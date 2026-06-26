@@ -23,13 +23,25 @@ class ChunkMetadata(BaseModel):
 
     chunk_id: str = Field(..., description='Уникальный идентификатор чанка (uuid).')
     document_id: str = Field(..., description='Идентификатор документа-источника.', examples=['fz-181-art21'])
+    parent_id: str = Field(
+        ..., description='Единица обновления/удаления: f"{document_id}:{section_number}" или просто document_id (Этап 13 плана).',
+    )
     category: Category = Field(..., description='Категория источника (раздел 3, Этап 5.1 плана).')
     source_title: str = Field(..., description='Человекочитаемое название источника.', examples=['ФЗ-181, Статья 21'])
     audience: Audience = Field(..., description='Целевая аудитория чанка.')
     topic: str = Field(..., description='Тема чанка.', examples=['quota'])
     date_added: date = Field(..., description='Дата добавления чанка в базу знаний.')
     chunk_index: int = Field(..., description='Порядковый номер чанка в пределах документа.')
+    chunk_number_in_section: int = Field(
+        ..., description='Локальный порядковый номер чанка внутри секции — основа детерминированного chunk_id (Этап 13).',
+    )
     version: str = Field(..., description='Дата редакции нормативного акта или ревизии статьи.')
     effective_date: date = Field(..., description='Дата вступления редакции в силу.')
+    effective_until: date | None = Field(
+        None, description='Дата, когда эту редакцию сменила следующая; None — текущая действующая (Этап 13 плана).',
+    )
+    is_actual: bool = Field(
+        True, description='True — действующая редакция (фильтр поиска по умолчанию); False — историческая (Этап 13 плана).',
+    )
     section_number: str | None = Field(None, description='Номер статьи/пункта из структуры документа (например, "128").')
     section_title: str | None = Field(None, description='Заголовок статьи/пункта (например, "Отпуска без сохранения заработной платы").')

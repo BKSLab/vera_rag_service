@@ -30,7 +30,10 @@ HYPOTHETICAL_QUESTIONS_PAYLOAD_FIELD = 'hypothetical_questions'
 # AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md). Низкая кардинальность
 # (`category` — 5 значений, `audience` — 3) — выигрыш от keyword-индекса
 # особенно заметен.
-PAYLOAD_INDEX_FIELDS = ('category', 'audience', 'document_id', 'version', 'topic')
+# `parent_id` (keyword) — адресация секции при гранулярном обновлении (Этап 13).
+# `is_actual` (bool) — дефолтный фильтр поиска, отсекающий исторические редакции.
+PAYLOAD_INDEX_KEYWORD_FIELDS = ('category', 'audience', 'document_id', 'version', 'topic', 'parent_id')
+PAYLOAD_INDEX_BOOL_FIELDS = ('is_actual',)
 
 
 def build_chunk_metadata(
@@ -51,14 +54,18 @@ def build_chunk_metadata(
     return ChunkMetadata(
         chunk_id=chunk.chunk_id,
         document_id=chunk.document_id,
+        parent_id=chunk.parent_id,
         category=chunk.category,
         source_title=document_metadata.source_title,
         audience=document_metadata.audience,
         topic=document_metadata.topic,
         date_added=date.today(),
         chunk_index=chunk.chunk_index,
+        chunk_number_in_section=chunk.chunk_number_in_section,
         version=document_metadata.version,
         effective_date=document_metadata.effective_date,
+        effective_until=None,
+        is_actual=True,
         section_number=chunk.section_number,
         section_title=chunk.section_title,
     )
@@ -136,11 +143,17 @@ class QdrantVectorStore:
             vectors_config=vectors_config,
             sparse_vectors_config=sparse_vectors_config,
         )
-        for field_name in PAYLOAD_INDEX_FIELDS:
+        for field_name in PAYLOAD_INDEX_KEYWORD_FIELDS:
             await self.client.create_payload_index(
                 collection_name=self.collection_name,
                 field_name=field_name,
                 field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+        for field_name in PAYLOAD_INDEX_BOOL_FIELDS:
+            await self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name=field_name,
+                field_schema=models.PayloadSchemaType.BOOL,
             )
         logger.info('✅ Коллекция Qdrant создана: %s', self.collection_name)
 
@@ -247,6 +260,45 @@ class QdrantVectorStore:
                 break
 
         return sorted(versions)
+
+    async def set_section_inactive(self, parent_id: str, effective_until: date) -> int:
+        """Помечает все актуальные чанки секции неактуальными (Этап 13 плана).
+
+        Вызывается ПОСЛЕ успешного upsert новых чанков той же секции —
+        старые чанки не удаляются физически, а получают is_actual=False
+        и effective_until, чтобы юридически корректно отвечать на вопросы
+        про события в прошлом ("какая норма действовала на дату X").
+
+        Args:
+            parent_id: Идентификатор секции (f"{document_id}:{section_number}").
+            effective_until: Дата, когда эта редакция была заменена (= effective_date новой).
+
+        Returns:
+            Количество чанков, переведённых в неактуальное состояние.
+        """
+        query_filter = models.Filter(must=[
+            models.FieldCondition(key='parent_id', match=models.MatchValue(value=parent_id)),
+            models.FieldCondition(key='is_actual', match=models.MatchValue(value=True)),
+        ])
+        count_result = await self.client.count(
+            collection_name=self.collection_name,
+            count_filter=query_filter,
+            exact=True,
+        )
+        superseded_count = count_result.count
+
+        if superseded_count > 0:
+            await self.client.set_payload(
+                collection_name=self.collection_name,
+                payload={'is_actual': False, 'effective_until': effective_until.isoformat()},
+                points=models.FilterSelector(filter=query_filter),
+            )
+            logger.info(
+                '📋 Секция %s: %d чанков помечены неактуальными (effective_until=%s).',
+                parent_id, superseded_count, effective_until,
+            )
+
+        return superseded_count
 
     async def list_chunks(self, document_id: str, version: str | None = None) -> list[dict]:
         """Возвращает payload всех чанков документа — для просмотра содержимого

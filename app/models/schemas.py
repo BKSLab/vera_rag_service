@@ -34,7 +34,13 @@ class Chunk(BaseModel):
 
     chunk_id: str = Field(..., description='Уникальный идентификатор чанка (uuid).')
     chunk_index: int = Field(..., description='Сквозной порядковый номер чанка в пределах документа.')
+    chunk_number_in_section: int = Field(
+        ..., description='Локальный порядковый номер чанка внутри секции (Этап 13 плана).',
+    )
     document_id: str = Field(..., description='Идентификатор документа-источника.')
+    parent_id: str = Field(
+        ..., description='Единица обновления/удаления статьи: f"{document_id}:{section_number}" или document_id (Этап 13).',
+    )
     category: Category = Field(..., description='Категория источника (раздел 3 плана).')
     section_index: int = Field(..., description='Номер секции-источника в документе.')
     section_number: str | None = Field(None, description='Номер статьи/пункта (для law).')
@@ -266,3 +272,45 @@ class DocumentDeletedResponse(BaseModel):
     """Тело ответа `DELETE /document/{id}`."""
 
     document_id: str = Field(..., description='Идентификатор удалённого документа.')
+
+
+# Категории, поддерживающие гранулярное обновление одной статьи/пункта
+# (Этап 13 плана). case_law и authorial обновляются только целым документом.
+SECTION_UPDATE_ALLOWED_CATEGORIES: frozenset[str] = frozenset({'labor_code', 'federal_law', 'other_npa'})
+
+
+class SectionUpdateRequest(BaseModel):
+    """Тело запроса `PUT /document/{id}/sections/{section_number}`.
+
+    Принимает готовый (консолидированный) текст одной статьи/пункта — не
+    текст закона-поправки с описанием дельты. Старые чанки этой секции
+    не удаляются физически, а помечаются `is_actual=False`/`effective_until`
+    (Этап 13 плана, историческое хранение редакций).
+    """
+
+    category: Category = Field(
+        ..., description=f'Категория источника. Допустимые значения для гранулярного обновления: {sorted(SECTION_UPDATE_ALLOWED_CATEGORIES)}.',
+    )
+    raw_text: str = Field(
+        ..., min_length=1, max_length=MAX_RAW_TEXT_LENGTH,
+        description='Готовый текст только этой статьи/пункта (не закон-поправка с описанием дельты).',
+    )
+    section_title: str = Field(..., min_length=1, description='Заголовок статьи/пункта (например, "Отпуска без сохранения заработной платы").')
+    version: str = Field(..., description='Идентификатор редакции (например, дата вступления в силу: "2026-01-01").')
+    effective_date: date = Field(..., description='Дата вступления этой редакции в силу.')
+    source_title: str = Field(..., description='Человекочитаемое название документа (например, "ТК РФ").')
+    audience: Audience = Field(..., description='Целевая аудитория.')
+    topic: str = Field(..., description='Тема.')
+
+
+class SectionUpdateResponse(BaseModel):
+    """Тело ответа `PUT /document/{id}/sections/{section_number}`."""
+
+    document_id: str = Field(..., description='Идентификатор документа.')
+    section_number: str = Field(..., description='Номер обновлённой статьи/пункта.')
+    parent_id: str = Field(..., description='Идентификатор секции: f"{document_id}:{section_number}".')
+    version: str = Field(..., description='Версия, под которой проиндексирована новая редакция.')
+    chunks_count: int = Field(..., description='Количество чанков новой редакции.')
+    superseded_chunks: int = Field(
+        0, description='Количество чанков предыдущей редакции, помеченных неактуальными.',
+    )

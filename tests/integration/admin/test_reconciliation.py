@@ -41,7 +41,8 @@ async def test_find_active_documents_missing_in_qdrant_returns_empty_when_consis
     await db_session.commit()
 
     chunk = Chunk(
-        chunk_id=str(uuid4()), chunk_index=0, document_id=document_id, category='labor_code',
+        chunk_id=str(uuid4()), chunk_index=0, chunk_number_in_section=0,
+        document_id=document_id, parent_id=f'{document_id}:21', category='labor_code',
         section_index=0, section_number='21', section_title='Статья 21', text='Текст.',
     )
     enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])

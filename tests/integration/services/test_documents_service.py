@@ -31,7 +31,8 @@ async def vector_store():
 
 def make_embedded_chunk(document_id: str) -> EmbeddedChunk:
     chunk = Chunk(
-        chunk_id=str(uuid4()), chunk_index=0, document_id=document_id, category='labor_code',
+        chunk_id=str(uuid4()), chunk_index=0, chunk_number_in_section=0,
+        document_id=document_id, parent_id=f'{document_id}:21', category='labor_code',
         section_index=0, section_number='21', section_title='Статья 21', text='Текст чанка.',
     )
     enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])

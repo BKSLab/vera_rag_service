@@ -29,7 +29,8 @@ async def populated_store():
     embedded_chunks = []
     for text, audience, vector in chunks_data:
         chunk = Chunk(
-            chunk_id=str(uuid4()), chunk_index=0, document_id='doc-1', category='labor_code',
+            chunk_id=str(uuid4()), chunk_index=0, chunk_number_in_section=0,
+            document_id='doc-1', parent_id='doc-1', category='labor_code',
             section_index=0, section_number=None, section_title='Секция', text=text,
         )
         enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])
@@ -136,7 +137,8 @@ async def imbalanced_category_store():
     labor_code_chunks = []
     for i in range(DENSE_TOP_K + 5):
         chunk = Chunk(
-            chunk_id=str(uuid4()), chunk_index=i, document_id='tk-rf', category='labor_code',
+            chunk_id=str(uuid4()), chunk_index=i, chunk_number_in_section=i,
+            document_id='tk-rf', parent_id='tk-rf', category='labor_code',
             section_index=0, section_number=None, section_title='Секция', text=f'Норма ТК РФ номер {i}.',
         )
         enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])
@@ -147,7 +149,8 @@ async def imbalanced_category_store():
 
     case_law_chunk_text = 'Разъяснение Пленума ВС РФ по применению нормы.'
     case_law_chunk = Chunk(
-        chunk_id=str(uuid4()), chunk_index=0, document_id='plenum-1', category='case_law',
+        chunk_id=str(uuid4()), chunk_index=0, chunk_number_in_section=0,
+        document_id='plenum-1', parent_id='plenum-1', category='case_law',
         section_index=0, section_number=None, section_title='Секция', text=case_law_chunk_text,
     )
     case_law_enriched = EnrichedChunk(

@@ -6,11 +6,20 @@ from app.db.models.document import Document
 from app.embeddings.embedder import embed_chunks
 from app.exceptions.document import DocumentRepositoryError
 from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError
-from app.ingestion.chunking import chunk_document
+from app.ingestion.chunking import chunk_document, compute_parent_id
 from app.ingestion.enrichment import enrich_chunks
 from app.ingestion.preprocess import preprocess_document
 from app.models.metadata import Category
-from app.models.schemas import MAX_RAW_TEXT_LENGTH, DocumentMetadataInput, EmbeddedChunk, IngestResponse
+from app.models.schemas import (
+    MAX_RAW_TEXT_LENGTH,
+    SECTION_UPDATE_ALLOWED_CATEGORIES,
+    DocumentMetadataInput,
+    EmbeddedChunk,
+    IngestResponse,
+    Section,
+    SectionUpdateRequest,
+    SectionUpdateResponse,
+)
 from app.repositories.document import DocumentRepository
 from app.vectorstore.qdrant_client import QdrantVectorStore
 
@@ -172,6 +181,81 @@ class IngestionService:
             )
         except DocumentRepositoryError as error:
             logger.warning('⚠️ Не удалось записать реестр документа %s. Детали: %s', document_id, error)
+
+    async def ingest_section(
+        self,
+        document_id: str,
+        section_number: str,
+        request: SectionUpdateRequest,
+    ) -> SectionUpdateResponse:
+        """Гранулярное обновление одной статьи/пункта (Этап 13 плана).
+
+        Новые чанки upsert'ятся первыми (is_actual=True). Только после
+        успешного завершения — старые чанки помечаются is_actual=False
+        с effective_until = effective_date новой редакции. Физического
+        удаления нет — история редакций хранится в Qdrant (для будущего
+        запроса "на дату X").
+
+        Args:
+            document_id: Идентификатор документа.
+            section_number: Номер статьи/пункта.
+            request: Тело запроса с текстом, метаданными и версией.
+
+        Returns:
+            Сводка: количество новых чанков и сколько помечено неактуальными.
+
+        Raises:
+            ValueError: Если category не поддерживает гранулярное обновление.
+        """
+        if request.category not in SECTION_UPDATE_ALLOWED_CATEGORIES:
+            raise ValueError(
+                f'Гранулярное обновление не поддерживается для category={request.category!r}. '
+                f'Допустимые: {sorted(SECTION_UPDATE_ALLOWED_CATEGORIES)}.'
+            )
+
+        parent_id = compute_parent_id(document_id, section_number)
+
+        section = Section(
+            document_id=document_id,
+            category=request.category,
+            section_index=0,
+            section_number=section_number,
+            section_title=request.section_title,
+            text=request.raw_text,
+        )
+        document_metadata = DocumentMetadataInput(
+            source_title=request.source_title,
+            audience=request.audience,
+            topic=request.topic,
+            version=request.version,
+            effective_date=request.effective_date,
+        )
+
+        chunks = chunk_document([section], version=request.version)
+        enriched_chunks = await enrich_chunks(self.llm_client, chunks)
+        embedded_chunks = await embed_chunks(
+            self.embedding_client, enriched_chunks, get_settings().yandex.embedding_doc_model_uri
+        )
+
+        await self.vector_store.upsert_chunks(embedded_chunks, document_metadata)
+
+        superseded = await self.vector_store.set_section_inactive(
+            parent_id=parent_id,
+            effective_until=request.effective_date,
+        )
+
+        logger.info(
+            '✅ Секция %s документа %s обновлена: %d чанков, %d устарели.',
+            section_number, document_id, len(embedded_chunks), superseded,
+        )
+        return SectionUpdateResponse(
+            document_id=document_id,
+            section_number=section_number,
+            parent_id=parent_id,
+            version=request.version,
+            chunks_count=len(embedded_chunks),
+            superseded_chunks=superseded,
+        )
 
     async def _mark_old_versions_inactive(self, document_id: str, old_versions: list[str]) -> None:
         try:

@@ -12,8 +12,25 @@ from app.models.schemas import Chunk, Section
 _CHUNK_ID_NAMESPACE = 'vera-rag-service'
 
 
-def _deterministic_chunk_id(document_id: str, version: str, chunk_index: int) -> str:
-    return str(uuid5(NAMESPACE_URL, f'{_CHUNK_ID_NAMESPACE}:{document_id}:{version}:{chunk_index}'))
+def _deterministic_chunk_id(parent_id: str, version: str, chunk_number_in_section: int) -> str:
+    """Детерминированный chunk_id от parent_id (не document_id) и локального
+    номера чанка внутри секции (Этап 13 плана). Правка одной статьи не
+    меняет chunk_id чанков других статей того же документа, потому что
+    `chunk_number_in_section` не сдвигается при изменении соседних секций."""
+    return str(uuid5(NAMESPACE_URL, f'{_CHUNK_ID_NAMESPACE}:{parent_id}:{version}:{chunk_number_in_section}'))
+
+
+def compute_parent_id(document_id: str, section_number: str | None) -> str:
+    """Вычисляет parent_id — единицу адресации секции (Этап 13 плана).
+
+    Для секций с номером (статьи ТК РФ, пункты подзаконного акта):
+        `f"{document_id}:{section_number}"`.
+    Для секций без явного номера (авторские статьи, fallback-документ):
+        просто `document_id`.
+    """
+    if section_number:
+        return f'{document_id}:{section_number}'
+    return document_id
 
 # Оценка токенов по эвристике "1 токен ~ 4 символа русского текста"
 # (RAG_SERVICE_PLAN.md, раздел 3.1) — без подключения токенизатора
@@ -214,14 +231,13 @@ def chunk_section_text(
 def chunk_document(sections: list[Section], version: str) -> list[Chunk]:
     """Разбивает все секции документа на чанки (Этап 2 плана).
 
-    `chunk_index` — сквозной по всему документу, а не по отдельной секции,
-    чтобы порядок чанков был восстановим при последующем upsert в Qdrant.
+    `chunk_index` — сквозной по всему документу (для сортировки и отображения).
+    `chunk_number_in_section` — локальный внутри секции (основа chunk_id,
+    Этап 13 плана: правка одной статьи не сдвигает id чанков соседних статей).
 
     Args:
         sections: Секции документа — результат Этапа 1 (препроцессинг).
-        version: Версия документа (ING-1) — часть детерминированного
-            `chunk_id`, чтобы повторный ingestion той же версии перезаписывал
-            те же точки Qdrant, а не плодил дубликаты.
+        version: Версия документа (ING-1) — часть детерминированного chunk_id.
 
     Returns:
         Список чанков со сквозной нумерацией и метаданными секции-источника.
@@ -230,12 +246,15 @@ def chunk_document(sections: list[Section], version: str) -> list[Chunk]:
     chunk_index = 0
 
     for section in sections:
-        for chunk_text_value in chunk_section_text(section.text):
+        parent_id = compute_parent_id(section.document_id, section.section_number)
+        for chunk_number_in_section, chunk_text_value in enumerate(chunk_section_text(section.text)):
             chunks.append(
                 Chunk(
-                    chunk_id=_deterministic_chunk_id(section.document_id, version, chunk_index),
+                    chunk_id=_deterministic_chunk_id(parent_id, version, chunk_number_in_section),
                     chunk_index=chunk_index,
+                    chunk_number_in_section=chunk_number_in_section,
                     document_id=section.document_id,
+                    parent_id=parent_id,
                     category=section.category,
                     section_index=section.section_index,
                     section_number=section.section_number,

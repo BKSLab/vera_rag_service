@@ -28,33 +28,36 @@ def _audience_match_values(audience: Audience) -> list[str]:
     return [audience, 'both']
 
 
-def build_qdrant_filter(filters: SearchFilters | None) -> models.Filter | None:
+def build_qdrant_filter(filters: SearchFilters | None) -> models.Filter:
     """Строит Qdrant-фильтр по метаданным — применяется до векторного сравнения.
 
+    `is_actual=True` добавляется всегда — скрывает исторические редакции
+    статей (Этап 13 плана). Остальные условия опциональны.
+
     Args:
-        filters: Фильтры по audience/topic/category. None — без фильтра.
+        filters: Фильтры по audience/topic/category. None — только is_actual.
 
     Returns:
-        `models.Filter` или None, если фильтров нет.
+        `models.Filter` (всегда, не None — минимум is_actual).
     """
-    if filters is None:
-        return None
-
-    conditions: list[models.FieldCondition] = []
-    if filters.audience is not None:
-        conditions.append(
-            models.FieldCondition(
-                key='audience', match=models.MatchAny(any=_audience_match_values(filters.audience))
+    conditions: list[models.Condition] = [
+        models.FieldCondition(key='is_actual', match=models.MatchValue(value=True))
+    ]
+    if filters is not None:
+        if filters.audience is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key='audience', match=models.MatchAny(any=_audience_match_values(filters.audience))
+                )
             )
-        )
-    if filters.topic is not None:
-        conditions.append(models.FieldCondition(key='topic', match=models.MatchValue(value=filters.topic)))
-    if filters.category is not None:
-        conditions.append(
-            models.FieldCondition(key='category', match=models.MatchValue(value=filters.category))
-        )
+        if filters.topic is not None:
+            conditions.append(models.FieldCondition(key='topic', match=models.MatchValue(value=filters.topic)))
+        if filters.category is not None:
+            conditions.append(
+                models.FieldCondition(key='category', match=models.MatchValue(value=filters.category))
+            )
 
-    return models.Filter(must=conditions) if conditions else None
+    return models.Filter(must=conditions)
 
 
 async def dense_search(
