@@ -41,6 +41,7 @@ class DashboardStats:
     qdrant_points_count: int | None
     qdrant_collection_status: str | None
     search_logs_total: int
+    avg_latency_query_expansion_ms: float | None
     avg_latency_embed_query_ms: float | None
     avg_latency_hybrid_search_ms: float | None
     avg_latency_rerank_ms: float | None
@@ -61,7 +62,7 @@ async def get_dashboard_stats(db_session: AsyncSession, vector_store: QdrantVect
     postgres_ok = True
     documents_total = documents_active = distinct_documents = 0
     search_logs_total = 0
-    avg_embed = avg_hybrid = avg_rerank = None
+    avg_expansion = avg_embed = avg_hybrid = avg_rerank = None
     last_search_at = None
 
     try:
@@ -75,9 +76,10 @@ async def get_dashboard_stats(db_session: AsyncSession, vector_store: QdrantVect
 
         search_logs_total = (await db_session.execute(select(func.count()).select_from(SearchLog))).scalar_one()
         recent_window_start = datetime.now(UTC) - DASHBOARD_RECENT_WINDOW
-        avg_embed, avg_hybrid, avg_rerank, last_search_at = (
+        avg_expansion, avg_embed, avg_hybrid, avg_rerank, last_search_at = (
             await db_session.execute(
                 select(
+                    func.avg(SearchLog.latency_query_expansion_ms),
                     func.avg(SearchLog.latency_embed_query_ms),
                     func.avg(SearchLog.latency_hybrid_search_ms),
                     func.avg(SearchLog.latency_rerank_ms),
@@ -114,6 +116,7 @@ async def get_dashboard_stats(db_session: AsyncSession, vector_store: QdrantVect
         qdrant_points_count=qdrant_points_count,
         qdrant_collection_status=qdrant_collection_status,
         search_logs_total=search_logs_total,
+        avg_latency_query_expansion_ms=avg_expansion,
         avg_latency_embed_query_ms=avg_embed,
         avg_latency_hybrid_search_ms=avg_hybrid,
         avg_latency_rerank_ms=avg_rerank,

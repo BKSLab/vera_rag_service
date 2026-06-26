@@ -1,5 +1,12 @@
 {% extends "sqladmin/layout.html" %}
 {% block content %}
+{# Каждый блок — отдельный col-12, не несколько блоков в одном.
+   У Tabler есть правило `.row-deck > .col { display:flex; align-items:stretch }`
+   (применяется к прямому ребёнку внешнего `.row.row-deck.row-cards` из
+   sqladmin/layout.html) — если в одном col-12 лежит несколько строк/карточек,
+   они становятся flex-элементами и сжимаются горизонтально вместо
+   вертикального стека (ровно так и было — найдено при ручной проверке
+   2026-06-21, скриншот дашборда). #}
 <div class="col-12">
   <div class="row row-cards mb-3">
     <div class="col-sm-6 col-lg-3">
@@ -35,7 +42,9 @@
       </div>
     </div>
   </div>
+</div>
 
+<div class="col-12">
   <div class="row row-cards mb-3">
     <div class="col-sm-6 col-lg-3">
       <div class="card">
@@ -62,13 +71,16 @@
       </div>
     </div>
   </div>
+</div>
 
-  <div class="card">
+<div class="col-12">
+  <div class="card mb-3">
     <div class="card-header"><h3 class="card-title">Средняя latency поиска (за последние 24 часа)</h3></div>
     <div class="card-body">
       <table class="table table-vcenter">
         <thead><tr><th>Стадия</th><th>Средняя latency, мс</th></tr></thead>
         <tbody>
+          <tr><td>query_expansion</td><td>{{ '%.1f' | format(stats.avg_latency_query_expansion_ms) if stats.avg_latency_query_expansion_ms is not none else '—' }}</td></tr>
           <tr><td>embed_query</td><td>{{ '%.1f' | format(stats.avg_latency_embed_query_ms) if stats.avg_latency_embed_query_ms is not none else '—' }}</td></tr>
           <tr><td>hybrid_search</td><td>{{ '%.1f' | format(stats.avg_latency_hybrid_search_ms) if stats.avg_latency_hybrid_search_ms is not none else '—' }}</td></tr>
           <tr><td>rerank</td><td>{{ '%.1f' | format(stats.avg_latency_rerank_ms) if stats.avg_latency_rerank_ms is not none else '—' }}</td></tr>
@@ -76,7 +88,9 @@
       </table>
     </div>
   </div>
+</div>
 
+<div class="col-12">
   <div class="card">
     <div class="card-header"><h3 class="card-title">Сверка реестра и Qdrant</h3></div>
     <div class="card-body">

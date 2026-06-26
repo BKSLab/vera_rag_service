@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 from markupsafe import Markup, escape
 from pydantic import ValidationError
 from sqladmin import BaseView, ModelView, expose
+from sqlalchemy import select
 from starlette.requests import Request
 
 from app.admin.csrf import get_or_create_csrf_token, verify_csrf_token
@@ -24,7 +25,7 @@ from app.ingestion.extract import (
     UploadTooLargeError,
     extract_text_from_upload,
 )
-from app.models.metadata import Audience, Category
+from app.models.metadata import CATEGORY_LABELS, Audience, Category
 from app.models.schemas import DocumentMetadataInput, SearchFilters
 
 SEARCH_TEST_TOP_K = 5
@@ -68,6 +69,7 @@ class SearchLogAdmin(ModelView, model=SearchLog):
         SearchLog.audience,
         SearchLog.topic,
         SearchLog.category,
+        SearchLog.latency_query_expansion_ms,
         SearchLog.latency_embed_query_ms,
         SearchLog.latency_hybrid_search_ms,
         SearchLog.latency_rerank_ms,
@@ -76,6 +78,7 @@ class SearchLogAdmin(ModelView, model=SearchLog):
     column_searchable_list = [SearchLog.query, SearchLog.request_id, SearchLog.topic]
     column_sortable_list = [
         SearchLog.created_at,
+        SearchLog.latency_query_expansion_ms,
         SearchLog.latency_embed_query_ms,
         SearchLog.latency_hybrid_search_ms,
         SearchLog.latency_rerank_ms,
@@ -85,6 +88,7 @@ class SearchLogAdmin(ModelView, model=SearchLog):
     column_formatters = {SearchLog.audience: _fmt_audience}
     column_formatters_detail = {
         SearchLog.audience: _fmt_audience,
+        SearchLog.query_variants: _fmt_json,
         SearchLog.dense_candidates: _fmt_json,
         SearchLog.sparse_candidates: _fmt_json,
         SearchLog.rrf_candidates: _fmt_json,
@@ -167,6 +171,7 @@ class DocumentUploadView(BaseView):
     async def document_upload(self, request: Request) -> Any:
         context: dict[str, Any] = {
             'categories': get_args(Category), 'audiences': get_args(Audience),
+            'category_labels': CATEGORY_LABELS,
             'csrf_token': get_or_create_csrf_token(request),
         }
 
@@ -234,7 +239,12 @@ class DocumentChunksView(BaseView):
     async def document_chunks(self, request: Request) -> Any:
         document_id = (request.query_params.get('document_id') or '').strip()
         version = (request.query_params.get('version') or '').strip() or None
-        context: dict[str, Any] = {'document_id': document_id, 'version': version}
+
+        async with async_session_factory() as db_session:
+            result = await db_session.execute(select(Document.document_id).distinct().order_by(Document.document_id))
+            document_ids = [row[0] for row in result.all()]
+
+        context: dict[str, Any] = {'document_id': document_id, 'version': version, 'document_ids': document_ids}
 
         if document_id:
             context['chunks'] = await get_vector_store().list_chunks(document_id, version=version)
@@ -257,6 +267,7 @@ class SearchTestView(BaseView):
     async def search_test(self, request: Request) -> Any:
         context: dict[str, Any] = {
             'categories': get_args(Category), 'audiences': get_args(Audience),
+            'category_labels': CATEGORY_LABELS,
             'csrf_token': get_or_create_csrf_token(request),
         }
 

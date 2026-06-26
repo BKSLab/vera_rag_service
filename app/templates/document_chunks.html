@@ -1,5 +1,7 @@
 {% extends "sqladmin/layout.html" %}
 {% block content %}
+{# Каждый блок — отдельный col-12 (см. dashboard.html — `.row-deck > .col`
+   у Tabler сжимает несколько блоков в одном col-12 горизонтально). #}
 <div class="col-12">
   <div class="card mb-3">
     <div class="card-header"><h3 class="card-title">Чанки документа в Qdrant</h3></div>
@@ -8,7 +10,15 @@
         <div class="row">
           <div class="col-md-6 mb-3">
             <label class="form-label">document_id</label>
-            <input type="text" name="document_id" class="form-control" value="{{ document_id or '' }}" required>
+            <select name="document_id" class="form-select" required>
+              <option value="">— выберите документ —</option>
+              {% for doc_id in document_ids %}
+              <option value="{{ doc_id }}" {% if doc_id == document_id %}selected{% endif %}>{{ doc_id }}</option>
+              {% endfor %}
+            </select>
+            {% if not document_ids %}
+            <div class="form-text">Пока нет загруженных документов.</div>
+            {% endif %}
           </div>
           <div class="col-md-4 mb-3">
             <label class="form-label">Версия (опционально)</label>
@@ -21,8 +31,10 @@
       </form>
     </div>
   </div>
+</div>
 
-  {% if chunks is defined %}
+{% if chunks is defined %}
+<div class="col-12">
   <div class="card">
     <div class="card-header"><h4 class="card-title">Найдено чанков: {{ chunks | length }}</h4></div>
     <div class="card-body">
@@ -52,6 +64,6 @@
       {% endif %}
     </div>
   </div>
-  {% endif %}
 </div>
+{% endif %}
 {% endblock %}

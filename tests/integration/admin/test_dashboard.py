@@ -10,11 +10,13 @@ def make_search_log(latency_embed_query_ms: float, created_at: datetime) -> Sear
     return SearchLog(
         request_id=str(uuid4()),
         query='квота на инвалидов',
+        query_variants=['квота на инвалидов'],
         dense_candidates=[],
         sparse_candidates=[],
         rrf_candidates=[],
         reranked_chunk_ids=[],
         final_response=[],
+        latency_query_expansion_ms=latency_embed_query_ms,
         latency_embed_query_ms=latency_embed_query_ms,
         latency_hybrid_search_ms=latency_embed_query_ms,
         latency_rerank_ms=latency_embed_query_ms,

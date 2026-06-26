@@ -9,10 +9,10 @@ logging.config.fileConfig(
     disable_existing_loggers=False,
 )
 
-logger = logging.getLogger('vera_rag_service')
+# Фильтр на уровне хендлера — request_id добавляется в record до форматирования
+# для ВСЕХ логгеров (httpx, hypercorn, vera_rag_service), не только нашего.
+_request_id_filter = RequestIdLogFilter()
+for _handler in logging.root.handlers:
+    _handler.addFilter(_request_id_filter)
 
-# LOG-2 — `request_id` в каждой записи лога этого логгера, не только в
-# `search_logs`. Фильтр на уровне логгера, не отдельного хендлера — ловит
-# любой хендлер, который добавят в будущем (например, отправку в систему
-# агрегации, LOG-1), без необходимости помнить прицепить фильтр туда тоже.
-logger.addFilter(RequestIdLogFilter())
+logger = logging.getLogger('vera_rag_service')

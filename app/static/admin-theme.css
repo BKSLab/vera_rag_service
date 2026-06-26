@@ -170,6 +170,26 @@ aside .active > .nav-link {
     border-radius: 6px !important;
 }
 .form-control::placeholder { color: var(--muted) !important; }
+/* `input[type=file]` — кнопка выбора файла рендерится браузером как
+   отдельный псевдоэлемент: `color`/`background-color` самого `.form-control`
+   на неё не действуют, текст наследовал светлый `--foreground` на светлом
+   нативном фоне кнопки (белый на белом). Стиль — как у `.btn-primary`. */
+input[type="file"].form-control::-webkit-file-upload-button,
+input[type="file"].form-control::file-selector-button {
+    background-color: var(--accent) !important;
+    border: 1px solid var(--accent) !important;
+    color: var(--accent-fg) !important;
+    border-radius: 4px !important;
+    padding: 4px 12px !important;
+    margin-right: 10px !important;
+    font-weight: 600;
+    cursor: pointer;
+}
+input[type="file"].form-control::-webkit-file-upload-button:hover,
+input[type="file"].form-control::file-selector-button:hover {
+    background-color: var(--accent-hover) !important;
+    border-color: var(--accent-hover) !important;
+}
 .form-control:focus, .form-select:focus {
     background-color: var(--surface) !important;
     border-color: var(--accent) !important;

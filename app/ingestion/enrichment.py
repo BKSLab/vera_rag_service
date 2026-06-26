@@ -15,7 +15,7 @@ async def enrich_chunk(llm_client: LlmClient, chunk: Chunk) -> EnrichedChunk:
     """Обогащает один чанк синтетическим заголовком и гипотетическими вопросами.
 
     Args:
-        llm_client: Клиент LLM (Yandex Cloud Model Gallery, см. раздел 0.1 плана).
+        llm_client: Клиент LLM (Polza AI/Gemini, см. `get_enrichment_llm_client`).
         chunk: Чанк — результат Этапа 2.
 
     Returns:
@@ -55,7 +55,7 @@ async def enrich_chunks(llm_client: LlmClient, chunks: list[Chunk]) -> list[Enri
             потому что отсутствие обогащения у части корпуса важнее
             заметить на этапе ingestion, а не молча получить чанк без
             гипотетических вопросов в индексе (осознанное решение, см.
-            AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md, ING-4). Используем
+            RAG_SERVICE_PLAN.md, раздел 7, ING-4). Используем
             `return_exceptions=True`, чтобы при отказе сообщить, какие именно
             `chunk_index` не обогатились, а не просто первую попавшуюся
             ошибку из параллельного батча.

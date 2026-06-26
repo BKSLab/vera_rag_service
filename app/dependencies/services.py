@@ -2,7 +2,12 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.dependencies.clients import EmbeddingClientDep, LlmClientDep, RerankerLlmClientDep
+from app.dependencies.clients import (
+    EmbeddingClientDep,
+    EnrichmentLlmClientDep,
+    QueryExpansionLlmClientDep,
+    RerankerLlmClientDep,
+)
 from app.dependencies.db_session import DbSessionDep
 from app.dependencies.repositories import DocumentRepositoryDep, SearchLogRepositoryDep
 from app.dependencies.vectorstore import VectorStoreDep
@@ -22,12 +27,14 @@ HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 def get_search_service(
     embedding_client: EmbeddingClientDep,
     reranker_llm_client: RerankerLlmClientDep,
+    query_expansion_llm_client: QueryExpansionLlmClientDep,
     vector_store: VectorStoreDep,
     search_log_repository: SearchLogRepositoryDep,
 ) -> SearchService:
     return SearchService(
         embedding_client=embedding_client,
         reranker_llm_client=reranker_llm_client,
+        query_expansion_llm_client=query_expansion_llm_client,
         vector_store=vector_store,
         search_log_repository=search_log_repository,
     )
@@ -37,7 +44,7 @@ SearchServiceDep = Annotated[SearchService, Depends(get_search_service)]
 
 
 def get_ingestion_service(
-    llm_client: LlmClientDep,
+    llm_client: EnrichmentLlmClientDep,
     embedding_client: EmbeddingClientDep,
     vector_store: VectorStoreDep,
     document_repository: DocumentRepositoryDep,

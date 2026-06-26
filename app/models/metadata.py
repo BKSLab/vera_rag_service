@@ -6,6 +6,17 @@ from pydantic import BaseModel, Field
 Category = Literal['labor_code', 'case_law', 'federal_law', 'other_npa', 'authorial']
 Audience = Literal['seeker', 'employer', 'both']
 
+# Человекочитаемые подписи для выбора category в формах админки (раздел 3
+# RAG_SERVICE_PLAN.md) — сами значения остаются техническими идентификаторами
+# (используются как есть в фильтрах/payload Qdrant), это только подпись в UI.
+CATEGORY_LABELS: dict[Category, str] = {
+    'labor_code': 'ТК РФ',
+    'case_law': 'Судебная практика, разъяснения Пленумов ВС РФ',
+    'federal_law': 'Иные федеральные законы (не ТК РФ), например ФЗ-181',
+    'other_npa': 'Подзаконные акты (постановления Правительства и т.п.)',
+    'authorial': 'Авторские статьи и систематизации',
+}
+
 
 class ChunkMetadata(BaseModel):
     """Схема метаданных чанка — см. RAG_SERVICE_PLAN.md, раздел 3."""

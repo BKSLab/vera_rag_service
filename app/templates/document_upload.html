@@ -12,7 +12,18 @@
       {% if success %}
       <div class="alert alert-success" role="alert">{{ success }}</div>
       {% endif %}
-      <form method="POST" enctype="multipart/form-data">
+      <div id="upload-pending-alert" class="alert alert-info d-none" role="status">
+        <div class="d-flex align-items-center">
+          <div class="spinner-border spinner-border-sm me-2" aria-hidden="true"></div>
+          <div>
+            Документ принят, идёт обработка (разбор → обогащение LLM → векторизация) —
+            это может занять от нескольких секунд до нескольких минут в зависимости от объёма.
+            <strong>Не закрывайте и не перезагружайте страницу</strong> — после завершения здесь
+            появится результат.
+          </div>
+        </div>
+      </div>
+      <form method="POST" enctype="multipart/form-data" id="upload-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="mb-3">
           <label class="form-label">Файл документа (.pdf, .docx, .md, .txt)</label>
@@ -27,7 +38,7 @@
             <label class="form-label">Категория</label>
             <select name="category" class="form-select" required>
               {% for category in categories %}
-              <option value="{{ category }}">{{ category }}</option>
+              <option value="{{ category }}">{{ category_labels.get(category, category) }}</option>
               {% endfor %}
             </select>
           </div>
@@ -58,9 +69,20 @@
             <input type="date" name="effective_date" class="form-control" required>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary">Загрузить и проиндексировать</button>
+        <button type="submit" class="btn btn-primary" id="upload-submit-btn">Загрузить и проиндексировать</button>
       </form>
     </div>
   </div>
 </div>
+<script>
+  // Запрос синхронный (ответ только после полного завершения пайплайна) —
+  // без этого индикатора непонятно, принял ли сервер клик на кнопку, пока
+  // не вернётся полная страница с результатом (может занять минуты).
+  document.getElementById('upload-form').addEventListener('submit', function () {
+    document.getElementById('upload-pending-alert').classList.remove('d-none');
+    var button = document.getElementById('upload-submit-btn');
+    button.disabled = true;
+    button.textContent = 'Обработка...';
+  });
+</script>
 {% endblock %}

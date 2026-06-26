@@ -118,14 +118,29 @@ class SearchSettings(SettingsBase):
 
 class PolzaSettings(SettingsBase):
     """Настройки доступа к Polza AI — OpenAI-совместимый провайдер-агрегатор,
-    используется только для reranker'а (Этап 6), а не для embeddings/enrichment —
-    те идут через прямой Yandex Cloud API (раздел 0.1 плана: дороже у
-    агрегатора при равном качестве). Для reranking важна не цена модели,
-    а доступ к конкретной нейтральной модели (Gemini) без завязки на Yandex.
+    используется для reranker'а (Этап 6) и обогащения чанков (Этап 3,
+    перенесено с Yandex 2026-06-21 — см. `app/dependencies/clients.py`).
+
+    Модели заданы отдельными настройками (раздел 8 плана) — reranking
+    (hot path поиска) и обогащение (offline ingestion) имеют разные
+    требования к latency и могут со временем разойтись по модели; единая
+    настройка `polza_llm_model` не позволяла это выразить.
     """
 
     polza_api_key: SecretStr = SecretStr('PLACEHOLDER_POLZA_API_KEY')
-    polza_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
+    # Выбор модели (Lite vs Pro vs другие кандидаты) — открытый вопрос,
+    # раздел 8 плана: `google/gemini-3.1-flash` (без `-lite`) не существует
+    # в каталоге Polza, временно возвращено рабочее значение до
+    # сравнительного теста на наших данных.
+    polza_enrichment_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
+    polza_reranker_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
+    polza_query_expansion_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
+    """Модель расширения запроса (декомпозиция + переформулировка,
+    раздел 8 плана) — отдельная настройка, как и у reranker'а/обогащения:
+    в hot path поиска (как reranker), но задача проще (1 короткий запрос
+    пользователя, не кандидаты-чанки) — может со временем разойтись по
+    модели с reranker'ом.
+    """
     polza_llm_api_url: str = 'https://polza.ai/api/v1/chat/completions'
 
 

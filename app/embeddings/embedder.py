@@ -6,8 +6,13 @@ from app.ingestion.enrichment import build_embedding_text
 from app.models.schemas import EmbeddedChunk, EnrichedChunk
 
 # Как и обогащение (Этап 3) — офлайн-процесс, требует ограничения
-# конкурентности к Yandex Cloud API.
-EMBEDDING_CONCURRENCY = 5
+# конкурентности к Yandex Cloud API. Снижено с 5 до 3 (2026-06-21) —
+# реальный лимит Yandex Cloud Text Embedding API оказался 10 запросов/сек
+# (увидели в ответе 429: "allowed 10 requests"), а каждый чанк делает до
+# 6 последовательных запросов (текст + до 5 вопросов) — 5 чанков
+# параллельно могли синхронно выйти за лимит на пике. С запасом на то, что
+# тот же лимит делят и query-time эмбеддинги поиска (app/search/hybrid.py).
+EMBEDDING_CONCURRENCY = 3
 
 
 async def embed_chunk(

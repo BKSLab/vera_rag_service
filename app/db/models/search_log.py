@@ -24,6 +24,11 @@ class SearchLog(Base):
         String(length=36), nullable=False, comment='UUID конкретного запроса — для сопоставления со структурными логами приложения.'
     )
     query: Mapped[str] = mapped_column(Text, nullable=False, comment='Исходный текст поискового запроса.')
+    query_variants: Mapped[list] = mapped_column(
+        JSONB, nullable=False,
+        comment='Подвопросы/переформулировки после расширения запроса (раздел 8 плана): список текстов, '
+        'каждый прошёл собственный hybrid_search до фьюжна в rrf_candidates.',
+    )
     audience: Mapped[str | None] = mapped_column(String(length=20), nullable=True, comment='Значение фильтра audience, если был задан.')
     topic: Mapped[str | None] = mapped_column(String(length=100), nullable=True, comment='Значение фильтра topic, если был задан.')
     category: Mapped[str | None] = mapped_column(String(length=20), nullable=True, comment='Значение фильтра category, если был задан.')
@@ -32,8 +37,11 @@ class SearchLog(Base):
     rrf_candidates: Mapped[list] = mapped_column(JSONB, nullable=False, comment='Результат RRF fusion: [[chunk_id, score], ...].')
     reranked_chunk_ids: Mapped[list] = mapped_column(JSONB, nullable=False, comment='chunk_id в порядке, который вернул LLM-reranker.')
     final_response: Mapped[list] = mapped_column(JSONB, nullable=False, comment='Финальный список чанков, отданный клиенту /search.')
-    latency_embed_query_ms: Mapped[float] = mapped_column(Float, nullable=False, comment='Латентность стадии embed_query, мс.')
-    latency_hybrid_search_ms: Mapped[float] = mapped_column(Float, nullable=False, comment='Латентность стадии hybrid_search (dense+sparse+RRF), мс.')
+    latency_query_expansion_ms: Mapped[float] = mapped_column(
+        Float, nullable=False, comment='Латентность стадии расширения запроса (декомпозиция+переформулировка, раздел 8 плана), мс.'
+    )
+    latency_embed_query_ms: Mapped[float] = mapped_column(Float, nullable=False, comment='Латентность стадии embed_query (сумма по всем вариантам запроса), мс.')
+    latency_hybrid_search_ms: Mapped[float] = mapped_column(Float, nullable=False, comment='Латентность стадии hybrid_search по всем вариантам запроса (dense+sparse+RRF на вариант + слияние), мс.')
     latency_rerank_ms: Mapped[float] = mapped_column(Float, nullable=False, comment='Латентность стадии rerank, мс.')
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, comment='Момент выполнения поискового запроса.'

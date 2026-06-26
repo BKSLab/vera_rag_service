@@ -40,7 +40,7 @@ RAG Service — сервис семантического поиска по ба
 
 ### 4. Наблюдаемость
 
-- **Структурированные логи** (JSON, `python-json-logger`) — со сквозным `request_id` (один на HTTP-запрос, виден и в логах, и в `search_logs`, и в заголовке ответа `X-Request-ID`).
+- **Логи** — со сквозным `request_id` (один на HTTP-запрос, виден и в логах, и в `search_logs`, и в заголовке ответа `X-Request-ID`).
 - **`GET /metrics`** (Prometheus) — latency/error rate по эндпоинтам.
 - **`/admin/dashboard`** — состояние Postgres/Qdrant, число документов/чанков, средняя latency поиска за 24 часа, сверка реестра документов с фактическим содержимым Qdrant.
 

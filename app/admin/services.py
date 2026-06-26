@@ -3,7 +3,12 @@ from contextlib import asynccontextmanager
 
 from app.clients.http_client import external_api_http_client
 from app.db.session import async_session_factory
-from app.dependencies.clients import get_embedding_client, get_llm_client, get_reranker_llm_client
+from app.dependencies.clients import (
+    get_embedding_client,
+    get_enrichment_llm_client,
+    get_query_expansion_llm_client,
+    get_reranker_llm_client,
+)
 from app.dependencies.vectorstore import get_vector_store
 from app.repositories.document import DocumentRepository
 from app.repositories.search_log import SearchLogRepository
@@ -26,7 +31,7 @@ async def build_ingestion_service() -> AsyncIterator[IngestionService]:
     # на каждый вызов формы загрузки.
     async with async_session_factory() as db_session:
         yield IngestionService(
-            llm_client=get_llm_client(external_api_http_client),
+            llm_client=get_enrichment_llm_client(external_api_http_client),
             embedding_client=get_embedding_client(external_api_http_client),
             vector_store=get_vector_store(),
             document_repository=DocumentRepository(db_session),
@@ -39,6 +44,7 @@ async def build_search_service() -> AsyncIterator[SearchService]:
         yield SearchService(
             embedding_client=get_embedding_client(external_api_http_client),
             reranker_llm_client=get_reranker_llm_client(external_api_http_client),
+            query_expansion_llm_client=get_query_expansion_llm_client(external_api_http_client),
             vector_store=get_vector_store(),
             search_log_repository=SearchLogRepository(db_session),
         )

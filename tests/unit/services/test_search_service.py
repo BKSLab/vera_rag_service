@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.exceptions.search_log import SearchLogRepositoryError
-from app.models.schemas import RerankResult, SearchFilters
+from app.models.schemas import QueryExpansionResult, QueryVariant, RerankResult, SearchFilters
 from app.repositories.search_log import SearchLogRepository
 from app.services.search import SearchService
 
@@ -39,11 +39,17 @@ def _build_service(*, has_candidates: bool = True) -> tuple[SearchService, Async
     reranker_llm_client = AsyncMock(spec=LlmClient)
     reranker_llm_client.get_llm_response.return_value = RerankResult(ranked_indices=[1])
 
+    query_expansion_llm_client = AsyncMock(spec=LlmClient)
+    query_expansion_llm_client.get_llm_response.return_value = QueryExpansionResult(
+        variants=[QueryVariant(sub_question='квота на инвалидов', rephrasings=[])]
+    )
+
     search_log_repository = AsyncMock(spec=SearchLogRepository)
 
     service = SearchService(
         embedding_client=embedding_client,
         reranker_llm_client=reranker_llm_client,
+        query_expansion_llm_client=query_expansion_llm_client,
         vector_store=vector_store,
         search_log_repository=search_log_repository,
     )

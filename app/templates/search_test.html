@@ -1,5 +1,7 @@
 {% extends "sqladmin/layout.html" %}
 {% block content %}
+{# Каждый блок — отдельный col-12 (см. dashboard.html — `.row-deck > .col`
+   у Tabler сжимает несколько блоков в одном col-12 горизонтально). #}
 <div class="col-12">
   <div class="card mb-3">
     <div class="card-header">
@@ -35,7 +37,7 @@
             <select name="category" class="form-select">
               <option value="">— любая (категорийно-сбалансированный поиск) —</option>
               {% for category in categories %}
-              <option value="{{ category }}" {% if selected_category==category %}selected{% endif %}>{{ category }}</option>
+              <option value="{{ category }}" {% if selected_category==category %}selected{% endif %}>{{ category_labels.get(category, category) }}</option>
               {% endfor %}
             </select>
           </div>
@@ -44,8 +46,23 @@
       </form>
     </div>
   </div>
+</div>
 
-  {% if diagnostics %}
+{% if diagnostics %}
+<div class="col-12">
+  <div class="card mb-3">
+    <div class="card-header"><h4 class="card-title">Варианты запроса (декомпозиция + переформулировка)</h4></div>
+    <div class="card-body">
+      <ol>
+        {% for variant in diagnostics.query_variants %}
+        <li>{{ variant }}</li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+</div>
+
+<div class="col-12">
   <div class="card mb-3">
     <div class="card-header"><h3 class="card-title">Финальный результат (после reranker'а)</h3></div>
     <div class="card-body">
@@ -74,7 +91,9 @@
       {% endif %}
     </div>
   </div>
+</div>
 
+<div class="col-12">
   <div class="row">
     <div class="col-md-4">
       <div class="card mb-3">
@@ -113,7 +132,9 @@
       </div>
     </div>
   </div>
+</div>
 
+<div class="col-12">
   <div class="card mb-3">
     <div class="card-header"><h4 class="card-title">Порядок reranker'а</h4></div>
     <div class="card-body">
@@ -124,6 +145,6 @@
       </ol>
     </div>
   </div>
-  {% endif %}
 </div>
+{% endif %}
 {% endblock %}

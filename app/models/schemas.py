@@ -4,12 +4,24 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.metadata import Audience, Category
 
-# Верхняя граница `raw_text` одного документа (API-3,
-# AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — с запасом от объёма
-# эталонного документа плана (ТК РФ целиком — ~840K символов, раздел 3.1
-# RAG_SERVICE_PLAN.md). Без лимита один запрос мог бы запустить
-# неограниченное число платных вызовов LLM/embedding API.
-MAX_RAW_TEXT_LENGTH = 1_000_000
+# Верхняя граница `raw_text` одного документа (API-3, RAG_SERVICE_PLAN.md,
+# раздел 7). Без лимита один запрос мог бы запустить неограниченное число
+# платных вызовов LLM/embedding API. Изначальная оценка (~840K символов,
+# по статистике Word) была занижена: реальный ТК РФ, извлечённый из .docx
+# через наш парсер (app/ingestion/extract.py — параграфы+таблицы+колонтитулы,
+# без агрессивного схлопывания пробелов), дал 1 028 313 символов — с запасом
+# на это и на будущие более крупные/обновлённые редакции взят порог 2M.
+MAX_RAW_TEXT_LENGTH = 2_000_000
+
+# Расширение запроса перед поиском (раздел 8 плана) — ограничивает веер
+# параллельных hybrid_search на один запрос пользователя (decomposed
+# sub_question × rephrasing): максимум MAX_SUB_QUESTIONS подвопросов,
+# каждый — исходная формулировка + до MAX_REPHRASINGS_PER_SUB_QUESTION
+# юридических переформулировок. Худший случай — 3 × 2 = 6 параллельных
+# hybrid_search вместо одного, согласовано как приемлемый верхний предел
+# latency/нагрузки на Qdrant.
+MAX_SUB_QUESTIONS = 3
+MAX_REPHRASINGS_PER_SUB_QUESTION = 1
 
 
 class Chunk(BaseModel):
@@ -136,6 +148,48 @@ class SearchResultChunk(BaseModel):
         'выстроить финальный ответ в порядке "база → судебная практика → иные акты → комментарий".'
     )
     score: float = Field(..., description='Итоговый score после RRF fusion.')
+
+
+class QueryVariant(BaseModel):
+    """Один смысловой подвопрос исходного запроса и его юридические переформулировки.
+
+    Для простого (не составного) запроса — единственный элемент
+    `QueryExpansionResult.variants`, `sub_question` равен исходному
+    тексту запроса. Для составного запроса — один элемент на каждый
+    независимый подвопрос, полученный декомпозицией.
+    """
+
+    sub_question: str = Field(..., min_length=1, description='Подвопрос (или исходный запрос целиком).')
+    rephrasings: list[str] = Field(
+        default_factory=list, description='Юридические переформулировки этого подвопроса (раздел 8 плана).'
+    )
+
+    @field_validator('rephrasings', mode='before')
+    @classmethod
+    def cap_rephrasings(cls, value: object) -> object:
+        if isinstance(value, list):
+            valid = [item for item in value if isinstance(item, str) and item.strip()]
+            return valid[:MAX_REPHRASINGS_PER_SUB_QUESTION]
+        return value
+
+
+class QueryExpansionResult(BaseModel):
+    """Structured output LLM-расширения запроса перед поиском (раздел 8 плана).
+
+    Решает две задачи одним вызовом: декомпозицию составного запроса на
+    независимые подвопросы (`variants`, не более `MAX_SUB_QUESTIONS`) и
+    переформулировку каждого подвопроса ближе к терминологии трудового
+    права (`rephrasings` внутри каждого `QueryVariant`).
+    """
+
+    variants: list[QueryVariant] = Field(..., min_length=1, description='Подвопросы исходного запроса.')
+
+    @field_validator('variants', mode='before')
+    @classmethod
+    def cap_variants(cls, value: object) -> object:
+        if isinstance(value, list):
+            return value[:MAX_SUB_QUESTIONS]
+        return value
 
 
 class RerankResult(BaseModel):

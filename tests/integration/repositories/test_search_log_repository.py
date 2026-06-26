@@ -9,6 +9,7 @@ async def test_save_search_log_persists_all_fields(db_session):
     search_log = SearchLog(
         request_id='11111111-1111-1111-1111-111111111111',
         query='квота на инвалидов',
+        query_variants=['квота на инвалидов'],
         audience='employer',
         topic='quota',
         category='labor_code',
@@ -17,6 +18,7 @@ async def test_save_search_log_persists_all_fields(db_session):
         rrf_candidates=[['chunk-1', 0.032]],
         reranked_chunk_ids=['chunk-1'],
         final_response=[{'chunk_id': 'chunk-1', 'score': 0.032}],
+        latency_query_expansion_ms=5.0,
         latency_embed_query_ms=12.5,
         latency_hybrid_search_ms=45.0,
         latency_rerank_ms=300.0,
