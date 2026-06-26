@@ -38,6 +38,7 @@ class EmbeddingClient:
         delay: float = DEFAULT_RETRY_DELAY,
         max_delay: float = DEFAULT_MAX_RETRY_DELAY,
         circuit_breaker: CircuitBreaker | None = None,
+        vector_dimension: int | None = None,
     ):
         """Инициализирует клиент.
 
@@ -62,6 +63,7 @@ class EmbeddingClient:
         self.delay = delay
         self.max_delay = max_delay
         self.circuit_breaker = circuit_breaker
+        self.vector_dimension = vector_dimension
 
     def _get_backoff_delay(self, attempt: int) -> float:
         base_delay = min(self.max_delay, self.delay * (2 ** (attempt - 1)))
@@ -74,7 +76,9 @@ class EmbeddingClient:
         Raises:
             EmbeddingClientRequestError: При HTTP-ошибке, таймауте или сетевой ошибке.
         """
-        payload = {'modelUri': model_uri, 'text': text}
+        payload: dict = {'modelUri': model_uri, 'text': text}
+        if self.vector_dimension is not None:
+            payload['vectorDimension'] = self.vector_dimension
         data_json = json.dumps(payload, ensure_ascii=False)
         try:
             response = await self.httpx_client.post(

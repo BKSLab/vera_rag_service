@@ -2,6 +2,7 @@ from app.ingestion.preprocess import (
     clean_text,
     extract_article_sections,
     extract_law_sections,
+    extract_npa_sections,
     preprocess_document,
 )
 
@@ -83,6 +84,78 @@ def test_extract_article_sections_returns_single_section_when_no_headings():
     assert len(sections) == 1
     assert sections[0].text == text
     assert sections[0].section_title == 'article-2'
+
+
+def test_extract_npa_sections_splits_by_top_level_dot_paragraphs():
+    text = (
+        '1. Работодатель обязан соблюдать квоту для приёма на работу инвалидов.\n'
+        '2. Квота устанавливается в размере от двух до четырёх процентов.\n'
+        '3. Порядок исчисления квоты определяется Правительством.'
+    )
+
+    sections = extract_npa_sections(document_id='postanovlenie-1', text=text, category='other_npa')
+
+    assert len(sections) == 3
+    assert sections[0].section_number == '1'
+    assert sections[1].section_number == '2'
+    assert sections[2].section_number == '3'
+    assert 'Работодатель обязан' in sections[0].text
+
+
+def test_extract_npa_sections_does_not_split_on_nested_numbering():
+    text = (
+        '1. Работодатель обязан.\n'
+        '1.1. Уточняющее требование.\n'
+        '2. Следующий пункт.'
+    )
+
+    sections = extract_npa_sections(document_id='postanovlenie-2', text=text, category='other_npa')
+
+    assert len(sections) == 2
+    assert sections[0].section_number == '1'
+    assert '1.1.' in sections[0].text
+    assert sections[1].section_number == '2'
+
+
+def test_extract_npa_sections_supports_closing_parenthesis_numbering():
+    text = (
+        '1) Первый пункт.\n'
+        '2) Второй пункт.'
+    )
+
+    sections = extract_npa_sections(document_id='akt-1', text=text, category='case_law')
+
+    assert len(sections) == 2
+    assert sections[0].section_number == '1'
+    assert sections[1].section_number == '2'
+
+
+def test_extract_npa_sections_fallback_when_no_paragraphs_found():
+    text = 'Текст постановления без нумерации, единый блок.'
+
+    sections = extract_npa_sections(document_id='akt-2', text=text, category='case_law')
+
+    assert len(sections) == 1
+    assert sections[0].text == text
+    assert sections[0].section_number is None
+
+
+def test_preprocess_document_dispatches_to_npa_extractor_for_case_law():
+    raw_text = '1. Разъяснить судам.\n2. При рассмотрении дел.'
+
+    sections = preprocess_document(document_id='plenum-1', raw_text=raw_text, category='case_law')
+
+    assert len(sections) == 2
+    assert sections[0].section_number == '1'
+
+
+def test_preprocess_document_dispatches_to_npa_extractor_for_other_npa():
+    raw_text = '1. Утвердить прилагаемые Правила.\n2. Министерству.'
+
+    sections = preprocess_document(document_id='postanovlenie-gov', raw_text=raw_text, category='other_npa')
+
+    assert len(sections) == 2
+    assert sections[0].section_number == '1'
 
 
 def test_preprocess_document_dispatches_to_law_extractor():

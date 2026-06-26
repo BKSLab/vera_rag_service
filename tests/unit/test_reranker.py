@@ -69,6 +69,18 @@ async def test_rerank_chunks_falls_back_when_llm_returns_no_valid_indices():
     assert result == ['chunk-0', 'chunk-1']
 
 
+async def test_rerank_chunks_returns_empty_list_when_llm_signals_no_relevant_candidates():
+    """Этап 6.1 — LLM вернул ranked_indices=[], что означает 'ничего релевантного'.
+    Это НЕ деградация к RRF, а чистый сигнал для Agent Service."""
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = RerankResult(ranked_indices=[])
+    candidates = make_candidates(5)
+
+    result = await rerank_chunks(llm_client, 'вопрос не по теме', candidates)
+
+    assert result == []
+
+
 def test_build_candidates_prompt_truncates_long_candidate_text():
     """SEARCH-3 — суммарная длина промпта не должна расти неограниченно
     с размером чанка/числом категорий."""

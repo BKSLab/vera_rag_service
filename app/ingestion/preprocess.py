@@ -10,13 +10,23 @@ from app.models.schemas import Section
 _CATEGORY_TO_STRUCTURE: dict[Category, str] = {
     'labor_code': 'law',
     'federal_law': 'law',
-    'other_npa': 'law',
-    'case_law': 'law',
+    'other_npa': 'npa',
+    'case_law': 'npa',
     'authorial': 'article',
 }
 
 LAW_ARTICLE_PATTERN = re.compile(
     r'^Статья\s+(?P<number>\d+(?:\.\d+)?)\.?\s*(?P<title>.*)$',
+    re.MULTILINE,
+)
+# Пронумерованные пункты верхнего уровня в постановлениях (Пленума ВС РФ,
+# Правительства РФ, подзаконных актах): "1.", "2.", "10." — одно целое число,
+# за которым точка, потом пробел/текст. Отрицательный lookahead (?!\d) исключает
+# вложенную нумерацию "1.1.", "2.3." чтобы не разбивать их на отдельные секции.
+# Вариант "1)" / "2)" добавлен как альтернатива — встречается в некоторых
+# постановлениях и нормативных актах.
+NPA_PARAGRAPH_PATTERN = re.compile(
+    r'^(?P<number>\d+)(?:\.(?!\d)|\))\s+',
     re.MULTILINE,
 )
 MARKDOWN_HEADING_PATTERN = re.compile(r'^#{1,3}\s+(?P<title>.+)$', re.MULTILINE)
@@ -144,6 +154,63 @@ def extract_article_sections(document_id: str, text: str, category: Category) ->
     return sections
 
 
+def extract_npa_sections(document_id: str, text: str, category: Category) -> list[Section]:
+    """Извлекает секции НПА/судебной практики по нумерованным пунктам верхнего уровня.
+
+    Постановления Пленума ВС РФ и Правительства РФ размечены пронумерованными
+    пунктами ("1.", "2."), а не статьями — для них `extract_law_sections`
+    не применим. Только верхний уровень ("1.", "2.") становится секцией;
+    вложенные пункты ("1.1.") и подпункты ("а)", "б)") остаются внутри
+    текста секции и разбиваются на чанки стандартным `chunk_section_text`.
+
+    Если ни одного пункта не найдено — весь документ становится одной
+    секцией (fallback, аналогично `extract_law_sections`).
+
+    Args:
+        document_id: Идентификатор документа-источника.
+        text: Очищенный текст документа.
+        category: Категория источника.
+
+    Returns:
+        Список секций с номером и началом текста пункта как заголовком.
+    """
+    matches = list(NPA_PARAGRAPH_PATTERN.finditer(text))
+
+    if not matches:
+        return [
+            Section(
+                document_id=document_id,
+                category=category,
+                section_index=0,
+                section_number=None,
+                section_title=document_id,
+                text=text.strip(),
+            )
+        ]
+
+    sections: list[Section] = []
+    for section_index, match in enumerate(matches):
+        start = match.start()
+        end = matches[section_index + 1].start() if section_index + 1 < len(matches) else len(text)
+        section_text = text[start:end].strip()
+        number = match.group('number')
+        first_line = section_text.split('\n', 1)[0].strip()
+        title = first_line[:80] if len(first_line) > 80 else first_line
+
+        sections.append(
+            Section(
+                document_id=document_id,
+                category=category,
+                section_index=section_index,
+                section_number=number,
+                section_title=title,
+                text=section_text,
+            )
+        )
+
+    return sections
+
+
 def preprocess_document(document_id: str, raw_text: str, category: Category) -> list[Section]:
     """Препроцессит документ от Expert: очистка текста + извлечение структуры (Этап 1 плана).
 
@@ -159,6 +226,9 @@ def preprocess_document(document_id: str, raw_text: str, category: Category) -> 
     """
     text = clean_text(raw_text)
 
-    if _CATEGORY_TO_STRUCTURE[category] == 'law':
+    structure = _CATEGORY_TO_STRUCTURE[category]
+    if structure == 'law':
         return extract_law_sections(document_id, text, category)
+    if structure == 'npa':
+        return extract_npa_sections(document_id, text, category)
     return extract_article_sections(document_id, text, category)

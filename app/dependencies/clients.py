@@ -60,6 +60,7 @@ def get_embedding_client(httpx_client: HttpClientDep) -> EmbeddingClient:
             'Authorization': f'Api-Key {settings.yandex_api_key.get_secret_value()}',
         },
         circuit_breaker=_yandex_embedding_breaker,
+        vector_dimension=settings.yandex_embedding_dim,
     )
 
 

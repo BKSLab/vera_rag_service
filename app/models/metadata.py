@@ -31,3 +31,5 @@ class ChunkMetadata(BaseModel):
     chunk_index: int = Field(..., description='Порядковый номер чанка в пределах документа.')
     version: str = Field(..., description='Дата редакции нормативного акта или ревизии статьи.')
     effective_date: date = Field(..., description='Дата вступления редакции в силу.')
+    section_number: str | None = Field(None, description='Номер статьи/пункта из структуры документа (например, "128").')
+    section_title: str | None = Field(None, description='Заголовок статьи/пункта (например, "Отпуска без сохранения заработной платы").')

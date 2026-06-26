@@ -59,6 +59,8 @@ def build_chunk_metadata(
         chunk_index=chunk.chunk_index,
         version=document_metadata.version,
         effective_date=document_metadata.effective_date,
+        section_number=chunk.section_number,
+        section_title=chunk.section_title,
     )
 
 

@@ -171,6 +171,8 @@ class SearchService:
                 audience=payload_by_id[chunk_id]['audience'],
                 topic=payload_by_id[chunk_id]['topic'],
                 category=payload_by_id[chunk_id]['category'],
+                section_number=payload_by_id[chunk_id].get('section_number'),
+                section_title=payload_by_id[chunk_id].get('section_title'),
                 score=rrf_scores.get(chunk_id, 0.0),
             )
             for chunk_id in reranked_ids

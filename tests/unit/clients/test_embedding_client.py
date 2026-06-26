@@ -64,3 +64,35 @@ async def test_get_embedding_raises_on_empty_embedding_field():
 
     with pytest.raises(EmbeddingApiRequestError):
         await client.get_embedding(text='текст', model_uri='emb://folder/model/latest')
+
+
+async def test_get_embedding_sends_vector_dimension_when_set():
+    import json as _json
+
+    received: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(_json.loads(request.content))
+        return httpx.Response(200, json={'embedding': [0.1, 0.2], 'numTokens': '2'})
+
+    client = _make_client(handler, vector_dimension=768)
+
+    await client.get_embedding(text='текст', model_uri='emb://folder/model/latest')
+
+    assert received[0].get('vectorDimension') == 768
+
+
+async def test_get_embedding_omits_vector_dimension_when_none():
+    import json as _json
+
+    received: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(_json.loads(request.content))
+        return httpx.Response(200, json={'embedding': [0.1, 0.2], 'numTokens': '2'})
+
+    client = _make_client(handler)
+
+    await client.get_embedding(text='текст', model_uri='emb://folder/model/latest')
+
+    assert 'vectorDimension' not in received[0]

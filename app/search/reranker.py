@@ -83,9 +83,13 @@ async def rerank_chunks(
         )
         return [chunk_id for chunk_id, _ in candidates[:top_n]]
 
+    if result.ranked_indices == []:
+        logger.info('ℹ️ Reranker: ни один кандидат не релевантен запросу, возвращается пустой список.')
+        return []
+
     ranked_chunk_ids = _map_indices_to_chunk_ids(result.ranked_indices, candidates, top_n)
     if not ranked_chunk_ids:
-        logger.warning('⚠️ Reranker не вернул валидных номеров, используется исходный порядок RRF.')
+        logger.warning('⚠️ Reranker вернул невалидные номера, используется исходный порядок RRF.')
         return [chunk_id for chunk_id, _ in candidates[:top_n]]
 
     return ranked_chunk_ids

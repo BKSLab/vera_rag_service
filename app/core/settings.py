@@ -87,7 +87,7 @@ class YandexSettings(SettingsBase):
     # Замерено реальным вызовом API на Этапе 4 (2026-06-19): и v2-модели,
     # и легаси text-search-doc отдают 256 — расходится с предположением
     # "максимум 768" из раздела 0.1 плана (см. примечание там же).
-    yandex_embedding_dim: int = 256
+    yandex_embedding_dim: int = 768
 
     @property
     def llm_model_uri(self) -> str:
