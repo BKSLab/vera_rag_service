@@ -261,44 +261,84 @@ class QdrantVectorStore:
 
         return sorted(versions)
 
-    async def set_section_inactive(self, parent_id: str, effective_until: date) -> int:
-        """Помечает все актуальные чанки секции неактуальными (Этап 13 плана).
+    async def get_actual_section_chunk_ids(
+        self, parent_id: str, exclude_version: str | None = None
+    ) -> list[str]:
+        """Возвращает ID актуальных чанков секции до её обновления.
 
-        Вызывается ПОСЛЕ успешного upsert новых чанков той же секции —
-        старые чанки не удаляются физически, а получают is_actual=False
-        и effective_until, чтобы юридически корректно отвечать на вопросы
-        про события в прошлом ("какая норма действовала на дату X").
+        Используется гранулярным обновлением статьи: старые point IDs
+        фиксируются ДО upsert новой редакции, чтобы после успешного upsert
+        пометить неактуальными только их, а не все точки с тем же parent_id.
+        Это важно, потому что число чанков между редакциями может измениться
+        (1 -> 2, 2 -> 1, N -> M), а новая редакция после upsert тоже имеет
+        тот же parent_id и is_actual=True.
 
         Args:
             parent_id: Идентификатор секции (f"{document_id}:{section_number}").
-            effective_until: Дата, когда эта редакция была заменена (= effective_date новой).
+            exclude_version: Если задано, чанки этой версии не возвращаются.
+                Это сохраняет идемпотентность повторного обновления той же
+                версии: перезаписанные точки не будут тут же помечены
+                историческими.
 
         Returns:
-            Количество чанков, переведённых в неактуальное состояние.
+            Список point IDs актуальных старых чанков секции.
         """
-        query_filter = models.Filter(must=[
+        must_conditions: list[models.Condition] = [
             models.FieldCondition(key='parent_id', match=models.MatchValue(value=parent_id)),
             models.FieldCondition(key='is_actual', match=models.MatchValue(value=True)),
-        ])
-        count_result = await self.client.count(
-            collection_name=self.collection_name,
-            count_filter=query_filter,
-            exact=True,
+        ]
+        must_not_conditions: list[models.Condition] = []
+        if exclude_version is not None:
+            must_not_conditions.append(
+                models.FieldCondition(key='version', match=models.MatchValue(value=exclude_version))
+            )
+
+        query_filter = models.Filter(
+            must=must_conditions,
+            must_not=must_not_conditions or None,
         )
-        superseded_count = count_result.count
 
-        if superseded_count > 0:
-            await self.client.set_payload(
+        chunk_ids: list[str] = []
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
                 collection_name=self.collection_name,
-                payload={'is_actual': False, 'effective_until': effective_until.isoformat()},
-                points=models.FilterSelector(filter=query_filter),
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
             )
-            logger.info(
-                '📋 Секция %s: %d чанков помечены неактуальными (effective_until=%s).',
-                parent_id, superseded_count, effective_until,
-            )
+            chunk_ids.extend(str(point.id) for point in points)
+            if offset is None:
+                break
 
-        return superseded_count
+        return chunk_ids
+
+    async def set_chunks_inactive(self, chunk_ids: list[str], effective_until: date) -> int:
+        """Помечает переданные чанки неактуальными по точным point IDs.
+
+        Args:
+            chunk_ids: Point IDs старых актуальных чанков, найденных до
+                записи новой редакции секции.
+            effective_until: Дата, когда эта редакция была заменена.
+
+        Returns:
+            Количество чанков, переданных на пометку.
+        """
+        if not chunk_ids:
+            return 0
+
+        await self.client.set_payload(
+            collection_name=self.collection_name,
+            payload={'is_actual': False, 'effective_until': effective_until.isoformat()},
+            points=chunk_ids,
+        )
+        logger.info(
+            '📋 %d старых чанков помечены неактуальными (effective_until=%s).',
+            len(chunk_ids), effective_until,
+        )
+        return len(chunk_ids)
 
     async def list_chunks(self, document_id: str, version: str | None = None) -> list[dict]:
         """Возвращает payload всех чанков документа — для просмотра содержимого

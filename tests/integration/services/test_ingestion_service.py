@@ -12,7 +12,7 @@ from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.core.settings import get_settings
 from app.db.models.document import Document
-from app.models.schemas import ChunkEnrichmentResult, DocumentMetadataInput
+from app.models.schemas import ChunkEnrichmentResult, DocumentMetadataInput, SectionUpdateRequest
 from app.repositories.document import DocumentRepository
 from app.services.ingestion import IngestionService
 from app.vectorstore.qdrant_client import QdrantVectorStore
@@ -60,6 +60,23 @@ def make_document_metadata(version: str = '2026-01-01') -> DocumentMetadataInput
         topic='quota',
         version=version,
         effective_date=date(2026, 1, 1),
+    )
+
+
+def make_words(count: int, prefix: str) -> str:
+    return ' '.join(f'{prefix}{index}' for index in range(count))
+
+
+def make_section_update_request(raw_text: str, version: str) -> SectionUpdateRequest:
+    return SectionUpdateRequest(
+        category='labor_code',
+        raw_text=raw_text,
+        section_title='Статья 128. Отпуск без сохранения заработной платы',
+        version=version,
+        effective_date=date.fromisoformat(version),
+        source_title='Трудовой кодекс Российской Федерации',
+        audience='both',
+        topic='leave',
     )
 
 
@@ -146,3 +163,86 @@ async def test_ingest_document_concurrent_calls_different_versions_leave_exactly
     chunks = await vector_store.list_chunks(document_id)
     versions_in_qdrant = {chunk['version'] for chunk in chunks}
     assert versions_in_qdrant == active_versions_in_registry
+
+
+async def test_ingest_section_keeps_new_revision_actual_when_chunk_count_grows(vector_store, db_session):
+    """Гранулярное обновление статьи должно помечать неактуальными только
+    старые point IDs, найденные до upsert новой редакции. Если старая
+    редакция была одним чанком, а новая стала несколькими, новые чанки
+    обязаны остаться is_actual=True и быть доступными поиску."""
+    service = make_ingestion_service(vector_store, db_session)
+    document_id = f'tk-rf-{uuid4().hex}'
+    section_number = '128'
+
+    await service.ingest_section(
+        document_id=document_id,
+        section_number=section_number,
+        request=make_section_update_request(
+            raw_text='Работнику может быть предоставлен отпуск без сохранения заработной платы.',
+            version='2026-01-01',
+        ),
+    )
+
+    await service.ingest_section(
+        document_id=document_id,
+        section_number=section_number,
+        request=make_section_update_request(
+            raw_text='\n'.join([
+                make_words(220, 'редакцияА'),
+                make_words(220, 'редакцияБ'),
+            ]),
+            version='2026-02-01',
+        ),
+    )
+
+    chunks = await vector_store.list_chunks(document_id)
+    old_chunks = [chunk for chunk in chunks if chunk['version'] == '2026-01-01']
+    new_chunks = [chunk for chunk in chunks if chunk['version'] == '2026-02-01']
+
+    assert len(old_chunks) == 1
+    assert len(new_chunks) > 1
+    assert all(chunk['is_actual'] is False for chunk in old_chunks)
+    assert all(chunk['effective_until'] == '2026-02-01' for chunk in old_chunks)
+    assert all(chunk['is_actual'] is True for chunk in new_chunks)
+    assert all(chunk['effective_until'] is None for chunk in new_chunks)
+
+
+async def test_ingest_section_keeps_new_revision_actual_when_chunk_count_shrinks(vector_store, db_session):
+    """Обратный сценарий: старая редакция секции была несколькими чанками,
+    новая стала одним. Все старые чанки должны стать historical, а новый
+    единственный чанк должен остаться actual."""
+    service = make_ingestion_service(vector_store, db_session)
+    document_id = f'tk-rf-{uuid4().hex}'
+    section_number = '129'
+
+    await service.ingest_section(
+        document_id=document_id,
+        section_number=section_number,
+        request=make_section_update_request(
+            raw_text='\n'.join([
+                make_words(220, 'стараяА'),
+                make_words(220, 'стараяБ'),
+            ]),
+            version='2026-01-01',
+        ),
+    )
+
+    await service.ingest_section(
+        document_id=document_id,
+        section_number=section_number,
+        request=make_section_update_request(
+            raw_text='Новая краткая редакция статьи.',
+            version='2026-02-01',
+        ),
+    )
+
+    chunks = await vector_store.list_chunks(document_id)
+    old_chunks = [chunk for chunk in chunks if chunk['version'] == '2026-01-01']
+    new_chunks = [chunk for chunk in chunks if chunk['version'] == '2026-02-01']
+
+    assert len(old_chunks) > 1
+    assert len(new_chunks) == 1
+    assert all(chunk['is_actual'] is False for chunk in old_chunks)
+    assert all(chunk['effective_until'] == '2026-02-01' for chunk in old_chunks)
+    assert new_chunks[0]['is_actual'] is True
+    assert new_chunks[0]['effective_until'] is None

@@ -231,6 +231,11 @@ class IngestionService:
             effective_date=request.effective_date,
         )
 
+        old_actual_chunk_ids = await self.vector_store.get_actual_section_chunk_ids(
+            parent_id=parent_id,
+            exclude_version=request.version,
+        )
+
         chunks = chunk_document([section], version=request.version)
         enriched_chunks = await enrich_chunks(self.llm_client, chunks)
         embedded_chunks = await embed_chunks(
@@ -239,8 +244,8 @@ class IngestionService:
 
         await self.vector_store.upsert_chunks(embedded_chunks, document_metadata)
 
-        superseded = await self.vector_store.set_section_inactive(
-            parent_id=parent_id,
+        superseded = await self.vector_store.set_chunks_inactive(
+            chunk_ids=old_actual_chunk_ids,
             effective_until=request.effective_date,
         )
 
