@@ -68,10 +68,15 @@ async def test_search_returns_reranked_chunk_and_saves_log():
     assert saved_log.query == 'квота на инвалидов'
     assert saved_log.audience == 'employer'
     assert saved_log.reranked_chunk_ids == [CHUNK_ID]
+    assert saved_log.query_expansion_status == 'ok'
+    assert saved_log.reranker_status == 'ok'
     assert len(saved_log.final_response) == 1
     assert saved_log.latency_embed_query_ms >= 0
     assert saved_log.latency_hybrid_search_ms >= 0
     assert saved_log.latency_rerank_ms >= 0
+    reranker_prompt = service.reranker_llm_client.get_llm_response.await_args.kwargs['content']
+    assert 'source_title=ФЗ-181, Статья 21' in reranker_prompt
+    assert 'category=federal_law' in reranker_prompt
 
 
 async def test_search_returns_empty_list_and_saves_log_when_no_candidates():
@@ -84,6 +89,7 @@ async def test_search_returns_empty_list_and_saves_log_when_no_candidates():
     saved_log = search_log_repository.save_search_log.await_args.args[0]
     assert saved_log.rrf_candidates == []
     assert saved_log.final_response == []
+    assert saved_log.reranker_status == 'no_candidates'
 
 
 async def test_search_degrades_when_search_log_save_fails():

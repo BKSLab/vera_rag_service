@@ -16,6 +16,8 @@ def make_search_log(latency_embed_query_ms: float, created_at: datetime) -> Sear
         rrf_candidates=[],
         reranked_chunk_ids=[],
         final_response=[],
+        query_expansion_status='ok',
+        reranker_status='ok',
         latency_query_expansion_ms=latency_embed_query_ms,
         latency_embed_query_ms=latency_embed_query_ms,
         latency_hybrid_search_ms=latency_embed_query_ms,

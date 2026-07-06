@@ -4,6 +4,8 @@ from app.core.config_logger import logger
 from app.core.rate_limit import limiter
 from app.dependencies.auth import VerifyApiKeyDep
 from app.dependencies.services import DocumentsServiceDep, IngestionServiceDep
+from app.exceptions.embedding import EmbeddingApiRequestError
+from app.exceptions.llm import LlmApiRequestError
 from app.models.schemas import DocumentDeletedResponse, SectionUpdateRequest, SectionUpdateResponse
 
 router = APIRouter(dependencies=[VerifyApiKeyDep])
@@ -82,6 +84,9 @@ async def update_section(
         result = await service.ingest_section(document_id, section_number, data)
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    except (LlmApiRequestError, EmbeddingApiRequestError) as error:
+        logger.exception('❌ Ошибка обновления секции %s/%s. Детали: %s', document_id, section_number, error)
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
     logger.info(
         '✅ Секция %s/%s обновлена: %d чанков, %d устарели.',
         document_id, section_number, result.chunks_count, result.superseded_chunks,

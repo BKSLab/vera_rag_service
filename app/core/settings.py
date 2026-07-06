@@ -107,12 +107,19 @@ class SearchSettings(SettingsBase):
 
     dense_top_k_per_category: int = 4
     sparse_top_k_per_category: int = 4
+    question_dense_top_k_per_category: int = 2
+    question_dense_top_k: int = 10
     """Top-K на каждую category при категорийно-сбалансированном поиске
     (SEARCH-2, AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — выбраны как
     компромисс без эмпирической проверки на реальном корпусе (раздел 5.1
     плана). Вынесены в `Settings`, чтобы их можно было менять и замерять
     без редеплоя кода, когда появится реальный корпус и набор "важных"
     вопросов для recall@k замера.
+
+    `question_dense_*` — отдельные лимиты для dense-lanes по гипотетическим
+    вопросам (`question_0..4`). Эти векторы повышают recall по бытовым
+    формулировкам запроса, но не должны раздувать candidate pool настолько
+    же сильно, как основной `chunk`-вектор.
     """
 
 
@@ -135,11 +142,21 @@ class PolzaSettings(SettingsBase):
     polza_enrichment_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
     polza_reranker_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
     polza_query_expansion_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
+    polza_enrichment_timeout_seconds: int = 90
+    polza_enrichment_retries: int = 3
+    polza_query_expansion_timeout_seconds: int = 12
+    polza_query_expansion_retries: int = 1
+    polza_reranker_timeout_seconds: int = 12
+    polza_reranker_retries: int = 1
     """Модель расширения запроса (декомпозиция + переформулировка,
     раздел 8 плана) — отдельная настройка, как и у reranker'а/обогащения:
     в hot path поиска (как reranker), но задача проще (1 короткий запрос
     пользователя, не кандидаты-чанки) — может со временем разойтись по
     модели с reranker'ом.
+
+    Timeout/retry тоже разделены по use-case: enrichment — offline ingestion
+    и может ждать дольше; query expansion/reranker — hot path `/search`,
+    поэтому при деградации LLM должны быстро уйти в fallback.
     """
     polza_llm_api_url: str = 'https://polza.ai/api/v1/chat/completions'
 

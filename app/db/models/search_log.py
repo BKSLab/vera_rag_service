@@ -37,6 +37,14 @@ class SearchLog(Base):
     rrf_candidates: Mapped[list] = mapped_column(JSONB, nullable=False, comment='Результат RRF fusion: [[chunk_id, score], ...].')
     reranked_chunk_ids: Mapped[list] = mapped_column(JSONB, nullable=False, comment='chunk_id в порядке, который вернул LLM-reranker.')
     final_response: Mapped[list] = mapped_column(JSONB, nullable=False, comment='Финальный список чанков, отданный клиенту /search.')
+    query_expansion_status: Mapped[str] = mapped_column(
+        String(length=40), nullable=False, default='ok',
+        comment='Статус расширения запроса: ok или fallback_unavailable.',
+    )
+    reranker_status: Mapped[str] = mapped_column(
+        String(length=40), nullable=False, default='ok',
+        comment='Статус reranker: ok/no_candidates/no_relevant/fallback_unavailable/fallback_invalid_output.',
+    )
     latency_query_expansion_ms: Mapped[float] = mapped_column(
         Float, nullable=False, comment='Латентность стадии расширения запроса (декомпозиция+переформулировка, раздел 8 плана), мс.'
     )

@@ -1,8 +1,18 @@
+from dataclasses import dataclass
+
 from app.clients.llm import LlmClient
 from app.core.config_logger import logger
 from app.exceptions.llm import LlmApiRequestError
 from app.models.schemas import QueryExpansionResult
 from app.search.prompts.query_expansion import QUERY_EXPANSION_PROMPT
+
+
+@dataclass(frozen=True)
+class QueryExpansionOutcome:
+    """Результат расширения запроса вместе со статусом fallback."""
+
+    queries: list[str]
+    status: str
 
 
 def _flatten_variants(result: QueryExpansionResult, original_query: str) -> list[str]:
@@ -23,7 +33,7 @@ def _flatten_variants(result: QueryExpansionResult, original_query: str) -> list
     return deduped or [original_query]
 
 
-async def expand_query(llm_client: LlmClient, query_text: str) -> list[str]:
+async def expand_query_with_status(llm_client: LlmClient, query_text: str) -> QueryExpansionOutcome:
     """Декомпозирует составной запрос на подвопросы и переформулирует
     каждый ближе к терминологии трудового права (раздел 8 плана).
 
@@ -58,6 +68,12 @@ async def expand_query(llm_client: LlmClient, query_text: str) -> list[str]:
         logger.warning(
             '⚠️ Расширение запроса недоступно, используется только исходный запрос. Детали: %s', error
         )
-        return [query_text]
+        return QueryExpansionOutcome(queries=[query_text], status='fallback_unavailable')
 
-    return _flatten_variants(result, query_text)
+    return QueryExpansionOutcome(queries=_flatten_variants(result, query_text), status='ok')
+
+
+async def expand_query(llm_client: LlmClient, query_text: str) -> list[str]:
+    """Совместимая обёртка: возвращает только варианты запроса без статуса."""
+    outcome = await expand_query_with_status(llm_client, query_text)
+    return outcome.queries

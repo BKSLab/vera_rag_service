@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from app.clients.llm import LlmClient
 from app.core.config_logger import logger
 from app.exceptions.llm import LlmApiRequestError
@@ -13,6 +15,14 @@ RERANK_TOP_N = 5
 # явного контроля. Полный текст не обязателен для ранжирования — начала
 # чанка достаточно, чтобы оценить релевантность запросу.
 CANDIDATE_TEXT_MAX_CHARS = 600
+
+
+@dataclass(frozen=True)
+class RerankOutcome:
+    """Результат reranker'а вместе со статусом для diagnostics/search_logs."""
+
+    chunk_ids: list[str]
+    status: str
 
 
 def _build_candidates_prompt(query_text: str, candidates: list[tuple[str, str]]) -> str:
@@ -44,12 +54,12 @@ def _map_indices_to_chunk_ids(
     return [candidates[index - 1][0] for index in deduped_indices]
 
 
-async def rerank_chunks(
+async def rerank_chunks_with_status(
     llm_client: LlmClient,
     query_text: str,
     candidates: list[tuple[str, str]],
     top_n: int = RERANK_TOP_N,
-) -> list[str]:
+) -> RerankOutcome:
     """Переранжирует top-20 кандидатов LLM'ом и возвращает top-N chunk_id (Этап 6).
 
     При отказе LLM (исчерпаны все retry) деградирует до исходного порядка
@@ -69,7 +79,7 @@ async def rerank_chunks(
         Пустой список, если candidates пуст.
     """
     if not candidates:
-        return []
+        return RerankOutcome(chunk_ids=[], status='no_candidates')
 
     try:
         result: RerankResult = await llm_client.get_llm_response(
@@ -81,15 +91,32 @@ async def rerank_chunks(
         logger.warning(
             '⚠️ Reranker недоступен, используется исходный порядок RRF. Детали: %s', error
         )
-        return [chunk_id for chunk_id, _ in candidates[:top_n]]
+        return RerankOutcome(
+            chunk_ids=[chunk_id for chunk_id, _ in candidates[:top_n]],
+            status='fallback_unavailable',
+        )
 
     if result.ranked_indices == []:
         logger.info('ℹ️ Reranker: ни один кандидат не релевантен запросу, возвращается пустой список.')
-        return []
+        return RerankOutcome(chunk_ids=[], status='no_relevant')
 
     ranked_chunk_ids = _map_indices_to_chunk_ids(result.ranked_indices, candidates, top_n)
     if not ranked_chunk_ids:
         logger.warning('⚠️ Reranker вернул невалидные номера, используется исходный порядок RRF.')
-        return [chunk_id for chunk_id, _ in candidates[:top_n]]
+        return RerankOutcome(
+            chunk_ids=[chunk_id for chunk_id, _ in candidates[:top_n]],
+            status='fallback_invalid_output',
+        )
 
-    return ranked_chunk_ids
+    return RerankOutcome(chunk_ids=ranked_chunk_ids, status='ok')
+
+
+async def rerank_chunks(
+    llm_client: LlmClient,
+    query_text: str,
+    candidates: list[tuple[str, str]],
+    top_n: int = RERANK_TOP_N,
+) -> list[str]:
+    """Совместимая обёртка: возвращает только chunk_id без статуса."""
+    outcome = await rerank_chunks_with_status(llm_client, query_text, candidates, top_n)
+    return outcome.chunk_ids

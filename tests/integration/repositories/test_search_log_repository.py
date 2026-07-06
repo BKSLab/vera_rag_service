@@ -18,6 +18,8 @@ async def test_save_search_log_persists_all_fields(db_session):
         rrf_candidates=[['chunk-1', 0.032]],
         reranked_chunk_ids=['chunk-1'],
         final_response=[{'chunk_id': 'chunk-1', 'score': 0.032}],
+        query_expansion_status='ok',
+        reranker_status='ok',
         latency_query_expansion_ms=5.0,
         latency_embed_query_ms=12.5,
         latency_hybrid_search_ms=45.0,
@@ -30,4 +32,6 @@ async def test_save_search_log_persists_all_fields(db_session):
     assert saved.query == 'квота на инвалидов'
     assert saved.dense_candidates == [['chunk-1', 0.9]]
     assert saved.reranked_chunk_ids == ['chunk-1']
+    assert saved.query_expansion_status == 'ok'
+    assert saved.reranker_status == 'ok'
     assert saved.created_at is not None

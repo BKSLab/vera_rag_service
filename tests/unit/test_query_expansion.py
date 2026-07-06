@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 from app.clients.llm import LlmClient
 from app.exceptions.llm import LlmApiRequestError
 from app.models.schemas import QueryExpansionResult, QueryVariant
-from app.search.query_expansion import expand_query
+from app.search.query_expansion import expand_query, expand_query_with_status
 
 
 async def test_expand_query_falls_back_to_original_when_llm_unavailable():
@@ -13,6 +13,16 @@ async def test_expand_query_falls_back_to_original_when_llm_unavailable():
     result = await expand_query(llm_client, 'какая квота на инвалидов')
 
     assert result == ['какая квота на инвалидов']
+
+
+async def test_expand_query_with_status_reports_fallback_when_llm_unavailable():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.side_effect = LlmApiRequestError(error_details='boom', request_url='https://x')
+
+    result = await expand_query_with_status(llm_client, 'какая квота на инвалидов')
+
+    assert result.queries == ['какая квота на инвалидов']
+    assert result.status == 'fallback_unavailable'
 
 
 async def test_expand_query_returns_single_variant_with_rephrasing():

@@ -1,4 +1,5 @@
 from sqlalchemy import delete, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +35,7 @@ class DocumentRepository:
         )
 
     async def save_document(self, document: Document) -> None:
-        """Записывает одну версию документа после успешного ingestion в Qdrant.
+        """Записывает или обновляет одну версию документа после успешного ingestion в Qdrant.
 
         Args:
             document: Запись реестра (без `id`/`created_at` — генерируются БД).
@@ -43,7 +44,32 @@ class DocumentRepository:
             DocumentRepositoryError: При ошибке записи в БД.
         """
         try:
-            self.db_session.add(document)
+            values = {
+                'document_id': document.document_id,
+                'version': document.version,
+                'category': document.category,
+                'source_title': document.source_title,
+                'audience': document.audience,
+                'topic': document.topic,
+                'effective_date': document.effective_date,
+                'is_active': document.is_active,
+            }
+            statement = (
+                insert(Document)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=['document_id', 'version'],
+                    set_={
+                        'category': values['category'],
+                        'source_title': values['source_title'],
+                        'audience': values['audience'],
+                        'topic': values['topic'],
+                        'effective_date': values['effective_date'],
+                        'is_active': values['is_active'],
+                    },
+                )
+            )
+            await self.db_session.execute(statement)
             await self.db_session.commit()
         except SQLAlchemyError as error:
             await self.db_session.rollback()

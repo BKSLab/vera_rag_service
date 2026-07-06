@@ -3,6 +3,7 @@ from datetime import date
 from qdrant_client import AsyncQdrantClient, models
 
 from app.core.config_logger import logger
+from app.exceptions.vectorstore import QdrantCollectionSchemaError
 from app.models.metadata import ChunkMetadata
 from app.models.schemas import DocumentMetadataInput, EmbeddedChunk
 from app.vectorstore.sparse import SPARSE_VECTOR_NAME, text_to_sparse_vector
@@ -114,6 +115,8 @@ class QdrantVectorStore:
         BM25 и payload-индексами, если коллекции ещё нет."""
         exists = await self.client.collection_exists(self.collection_name)
         if exists:
+            await self._validate_existing_collection()
+            await self._ensure_payload_indexes()
             return
 
         logger.info('💾 Создание коллекции Qdrant: %s', self.collection_name)
@@ -143,19 +146,86 @@ class QdrantVectorStore:
             vectors_config=vectors_config,
             sparse_vectors_config=sparse_vectors_config,
         )
+        await self._ensure_payload_indexes()
+        logger.info('✅ Коллекция Qdrant создана: %s', self.collection_name)
+
+    async def _validate_existing_collection(self) -> None:
+        """Fail-fast проверка схемы существующей коллекции.
+
+        Старую коллекцию с другой размерностью, без named vectors или без
+        sparse-вектора нельзя безопасно "починить" на лету: нужны явная
+        миграция или reindex. Payload-индексы проверяются отдельно и могут
+        быть созданы автоматически, потому что не меняют данные точек.
+        """
+        collection_info = await self.client.get_collection(self.collection_name)
+        params = collection_info.config.params
+        problems: list[str] = []
+
+        vectors = params.vectors
+        if not isinstance(vectors, dict):
+            problems.append('ожидалась коллекция с named vectors')
+        else:
+            for vector_name in [CHUNK_VECTOR_NAME, *QUESTION_VECTOR_NAMES]:
+                vector_params = vectors.get(vector_name)
+                if vector_params is None:
+                    problems.append(f'нет dense-вектора {vector_name!r}')
+                    continue
+                if vector_params.size != self.vector_dim:
+                    problems.append(
+                        f'вектор {vector_name!r} имеет размерность {vector_params.size}, ожидалась {self.vector_dim}'
+                    )
+                if vector_params.distance != models.Distance.COSINE:
+                    problems.append(
+                        f'вектор {vector_name!r} использует distance={vector_params.distance}, ожидался Cosine'
+                    )
+
+        sparse_vectors = params.sparse_vectors or {}
+        sparse_vector_params = sparse_vectors.get(SPARSE_VECTOR_NAME)
+        if sparse_vector_params is None:
+            problems.append(f'нет sparse-вектора {SPARSE_VECTOR_NAME!r}')
+        elif sparse_vector_params.modifier != models.Modifier.IDF:
+            problems.append(
+                f'sparse-вектор {SPARSE_VECTOR_NAME!r} использует modifier={sparse_vector_params.modifier}, ожидался IDF'
+            )
+
+        if problems:
+            raise QdrantCollectionSchemaError(self.collection_name, problems)
+
+        logger.info('✅ Схема существующей коллекции Qdrant валидна: %s', self.collection_name)
+
+    async def _ensure_payload_indexes(self) -> None:
+        """Создаёт недостающие payload-индексы и падает на несовместимых типах."""
+        collection_info = await self.client.get_collection(self.collection_name)
+        payload_schema = collection_info.payload_schema or {}
+
         for field_name in PAYLOAD_INDEX_KEYWORD_FIELDS:
+            existing = payload_schema.get(field_name)
+            if existing is not None and existing.data_type != models.PayloadSchemaType.KEYWORD:
+                raise QdrantCollectionSchemaError(
+                    self.collection_name,
+                    [f'payload-index {field_name!r} имеет тип {existing.data_type}, ожидался keyword'],
+                )
+            if existing is not None:
+                continue
             await self.client.create_payload_index(
                 collection_name=self.collection_name,
                 field_name=field_name,
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
         for field_name in PAYLOAD_INDEX_BOOL_FIELDS:
+            existing = payload_schema.get(field_name)
+            if existing is not None and existing.data_type != models.PayloadSchemaType.BOOL:
+                raise QdrantCollectionSchemaError(
+                    self.collection_name,
+                    [f'payload-index {field_name!r} имеет тип {existing.data_type}, ожидался bool'],
+                )
+            if existing is not None:
+                continue
             await self.client.create_payload_index(
                 collection_name=self.collection_name,
                 field_name=field_name,
                 field_schema=models.PayloadSchemaType.BOOL,
             )
-        logger.info('✅ Коллекция Qdrant создана: %s', self.collection_name)
 
     async def upsert_chunk(
         self, embedded_chunk: EmbeddedChunk, document_metadata: DocumentMetadataInput
@@ -260,6 +330,26 @@ class QdrantVectorStore:
                 break
 
         return sorted(versions)
+
+    async def count_actual_document_chunks(self, document_id: str, version: str) -> int:
+        """Считает поисково-доступные чанки активной версии документа.
+
+        `get_document_versions()` показывает только наличие версии в Qdrant.
+        Для диагностики целостности БЗ важнее наличие хотя бы одного чанка,
+        который реально видит search hot path (`is_actual=True`).
+        """
+        result = await self.client.count(
+            collection_name=self.collection_name,
+            count_filter=models.Filter(
+                must=[
+                    models.FieldCondition(key='document_id', match=models.MatchValue(value=document_id)),
+                    models.FieldCondition(key='version', match=models.MatchValue(value=version)),
+                    models.FieldCondition(key='is_actual', match=models.MatchValue(value=True)),
+                ]
+            ),
+            exact=True,
+        )
+        return result.count
 
     async def get_actual_section_chunk_ids(
         self, parent_id: str, exclude_version: str | None = None

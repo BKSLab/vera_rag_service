@@ -9,7 +9,7 @@ from app.core.settings import get_settings
 from app.models.metadata import Audience, Category
 from app.models.schemas import SearchFilters
 from app.search.fusion import rrf_fusion
-from app.vectorstore.qdrant_client import CHUNK_VECTOR_NAME
+from app.vectorstore.qdrant_client import CHUNK_VECTOR_NAME, QUESTION_VECTOR_NAMES
 from app.vectorstore.sparse import SPARSE_VECTOR_NAME, text_to_sparse_vector
 
 DENSE_TOP_K = 20
@@ -66,6 +66,7 @@ async def dense_search(
     query_vector: list[float],
     filters: SearchFilters | None = None,
     top_k: int = DENSE_TOP_K,
+    vector_name: str = CHUNK_VECTOR_NAME,
 ) -> list[tuple[str, float]]:
     """Dense-поиск (cosine) по основному вектору чанка (Этап 5).
 
@@ -75,6 +76,7 @@ async def dense_search(
         query_vector: Эмбеддинг запроса (query-модель, не doc-модель).
         filters: Фильтры по метаданным, применяются до векторного сравнения.
         top_k: Сколько кандидатов вернуть.
+        vector_name: Named vector Qdrant, по которому искать (`chunk` или `question_N`).
 
     Returns:
         Список (chunk_id, score) в порядке убывания score.
@@ -82,7 +84,7 @@ async def dense_search(
     result = await client.query_points(
         collection_name=collection_name,
         query=query_vector,
-        using=CHUNK_VECTOR_NAME,
+        using=vector_name,
         query_filter=build_qdrant_filter(filters),
         limit=top_k,
         with_payload=False,
@@ -137,7 +139,7 @@ async def _category_balanced_lanes(
     query_vector: list[float],
     query_text: str,
     filters: SearchFilters | None,
-) -> tuple[list[list[tuple[str, float]]], list[list[tuple[str, float]]]]:
+) -> tuple[list[list[tuple[str, float]]], list[list[tuple[str, float]]], list[list[tuple[str, float]]]]:
     """Запускает dense и sparse поиск отдельно на каждую `category` (Этап 5.1 плана).
 
     Каждая категория — собственный ранжированный список, не общий пул кандидатов:
@@ -157,8 +159,9 @@ async def _category_balanced_lanes(
         filters: Фильтры audience/topic (без category — она перебирается здесь).
 
     Returns:
-        (dense_lanes, sparse_lanes) — по одному ранжированному списку
-        (chunk_id, score) на каждую из 5 категорий, в порядке `ALL_CATEGORIES`.
+        (chunk_dense_lanes, question_dense_lanes, sparse_lanes) — ранжированные
+        списки (chunk_id, score): основной dense по каждой категории, dense
+        по `question_0..4` для каждой категории и sparse по каждой категории.
     """
     per_category_filters = [
         SearchFilters(
@@ -174,7 +177,7 @@ async def _category_balanced_lanes(
     # не измерено на реальном корпусе (раздел 5.1 плана), должно быть
     # доступно для замера/правки без редеплоя кода.
     search_settings = get_settings().search
-    dense_lanes, sparse_lanes = await asyncio.gather(
+    chunk_dense_lanes, question_dense_lanes_nested, sparse_lanes = await asyncio.gather(
         asyncio.gather(
             *(
                 dense_search(
@@ -182,6 +185,17 @@ async def _category_balanced_lanes(
                     top_k=search_settings.dense_top_k_per_category,
                 )
                 for f in per_category_filters
+            )
+        ),
+        asyncio.gather(
+            *(
+                dense_search(
+                    client, collection_name, query_vector, f,
+                    top_k=search_settings.question_dense_top_k_per_category,
+                    vector_name=question_vector_name,
+                )
+                for f in per_category_filters
+                for question_vector_name in QUESTION_VECTOR_NAMES
             )
         ),
         asyncio.gather(
@@ -194,7 +208,7 @@ async def _category_balanced_lanes(
             )
         ),
     )
-    return list(dense_lanes), list(sparse_lanes)
+    return list(chunk_dense_lanes), list(question_dense_lanes_nested), list(sparse_lanes)
 
 
 @dataclass
@@ -244,28 +258,45 @@ async def hybrid_search(
         уверенности (раздел 3 плана), реранжирование само по себе scores не даёт.
     """
     if filters is not None and filters.category is not None:
-        dense_results, sparse_results = await asyncio.gather(
+        search_settings = get_settings().search
+        dense_results, question_dense_results_nested, sparse_results = await asyncio.gather(
             dense_search(client, collection_name, query_vector, filters),
+            asyncio.gather(
+                *(
+                    dense_search(
+                        client, collection_name, query_vector, filters,
+                        top_k=search_settings.question_dense_top_k,
+                        vector_name=question_vector_name,
+                    )
+                    for question_vector_name in QUESTION_VECTOR_NAMES
+                )
+            ),
             sparse_search(client, collection_name, query_text, filters),
         )
+        question_dense_results = [item for lane in question_dense_results_nested for item in lane]
         fused = rrf_fusion(
-            [[chunk_id for chunk_id, _ in dense_results], [chunk_id for chunk_id, _ in sparse_results]]
+            [[chunk_id for chunk_id, _ in dense_results]]
+            + [[chunk_id for chunk_id, _ in lane] for lane in question_dense_results_nested]
+            + [[chunk_id for chunk_id, _ in sparse_results]]
         )
     else:
-        dense_lanes, sparse_lanes = await _category_balanced_lanes(
+        dense_lanes, question_dense_lanes, sparse_lanes = await _category_balanced_lanes(
             client, collection_name, query_vector, query_text, filters
         )
         dense_results = [item for lane in dense_lanes for item in lane]
+        question_dense_results = [item for lane in question_dense_lanes for item in lane]
         sparse_results = [item for lane in sparse_lanes for item in lane]
         fused = rrf_fusion(
             [[chunk_id for chunk_id, _ in lane] for lane in dense_lanes]
+            + [[chunk_id for chunk_id, _ in lane] for lane in question_dense_lanes]
             + [[chunk_id for chunk_id, _ in lane] for lane in sparse_lanes]
         )
 
     logger.info(
-        '🔍 Hybrid search: dense=%d, sparse=%d кандидатов.', len(dense_results), len(sparse_results)
+        '🔍 Hybrid search: dense=%d, question_dense=%d, sparse=%d кандидатов.',
+        len(dense_results), len(question_dense_results), len(sparse_results),
     )
-    return HybridSearchResult(dense=dense_results, sparse=sparse_results, fused=fused)
+    return HybridSearchResult(dense=[*dense_results, *question_dense_results], sparse=sparse_results, fused=fused)
 
 
 async def get_candidate_chunk_ids(

@@ -14,13 +14,36 @@ from app.models.schemas import SearchFilters, SearchResultChunk
 from app.repositories.search_log import SearchLogRepository
 from app.search.fusion import rrf_fusion
 from app.search.hybrid import HybridSearchResult, hybrid_search
-from app.search.query_expansion import expand_query
-from app.search.reranker import rerank_chunks
+from app.search.query_expansion import expand_query_with_status
+from app.search.reranker import rerank_chunks_with_status
 from app.vectorstore.qdrant_client import (
     SYNTHETIC_TITLE_PAYLOAD_FIELD,
     TEXT_PAYLOAD_FIELD,
     QdrantVectorStore,
 )
+
+
+def _build_reranker_candidate_text(payload: dict) -> str:
+    """Компактный юридический контекст для LLM-reranker'а.
+
+    Финальный API-ответ не меняется; metadata header нужен только на стадии
+    сравнения кандидатов, чтобы модель различала источник, категорию,
+    статью/пункт и редакцию, а не видела один голый текст.
+    """
+    header_parts = [
+        f"source_title={payload.get('source_title')}",
+        f"category={payload.get('category')}",
+    ]
+    if payload.get('section_number'):
+        header_parts.append(f"section_number={payload.get('section_number')}")
+    if payload.get('section_title'):
+        header_parts.append(f"section_title={payload.get('section_title')}")
+    if payload.get('effective_date'):
+        header_parts.append(f"effective_date={payload.get('effective_date')}")
+    if payload.get('version'):
+        header_parts.append(f"version={payload.get('version')}")
+
+    return f"[{' | '.join(header_parts)}]\n{payload[TEXT_PAYLOAD_FIELD]}"
 
 
 @dataclass
@@ -37,6 +60,8 @@ class SearchDiagnostics:
     reranked_ids: list[str]
     results: list[SearchResultChunk]
     query_variants: list[str]
+    query_expansion_status: str
+    reranker_status: str
 
 
 class SearchService:
@@ -93,7 +118,8 @@ class SearchService:
         request_id = get_request_id() or str(uuid4())
 
         started_at = time.perf_counter()
-        query_variants = await expand_query(self.query_expansion_llm_client, query)
+        query_expansion_outcome = await expand_query_with_status(self.query_expansion_llm_client, query)
+        query_variants = query_expansion_outcome.queries
         latency_query_expansion_ms = (time.perf_counter() - started_at) * 1000
 
         # Каждый вариант запроса (исходный/декомпозированный подвопрос ×
@@ -139,10 +165,14 @@ class SearchService:
                 latency_embed_query_ms=latency_embed_query_ms,
                 latency_hybrid_search_ms=latency_hybrid_search_ms,
                 latency_rerank_ms=0.0,
+                query_expansion_status=query_expansion_outcome.status,
+                reranker_status='no_candidates',
             )
             return SearchDiagnostics(
                 dense=hybrid_result.dense, sparse=hybrid_result.sparse, fused=hybrid_result.fused,
                 reranked_ids=[], results=[], query_variants=query_variants,
+                query_expansion_status=query_expansion_outcome.status,
+                reranker_status='no_candidates',
             )
 
         rrf_scores = dict(hybrid_result.fused)
@@ -154,12 +184,15 @@ class SearchService:
         payload_by_id = {str(point.id): point.payload for point in points}
 
         candidates_for_rerank = [
-            (chunk_id, payload_by_id[chunk_id][TEXT_PAYLOAD_FIELD])
+            (chunk_id, _build_reranker_candidate_text(payload_by_id[chunk_id]))
             for chunk_id in candidate_ids
             if chunk_id in payload_by_id
         ]
         started_at = time.perf_counter()
-        reranked_ids = await rerank_chunks(self.reranker_llm_client, query, candidates_for_rerank, top_n=top_k)
+        rerank_outcome = await rerank_chunks_with_status(
+            self.reranker_llm_client, query, candidates_for_rerank, top_n=top_k
+        )
+        reranked_ids = rerank_outcome.chunk_ids
         latency_rerank_ms = (time.perf_counter() - started_at) * 1000
 
         results = [
@@ -185,10 +218,14 @@ class SearchService:
             latency_embed_query_ms=latency_embed_query_ms,
             latency_hybrid_search_ms=latency_hybrid_search_ms,
             latency_rerank_ms=latency_rerank_ms,
+            query_expansion_status=query_expansion_outcome.status,
+            reranker_status=rerank_outcome.status,
         )
         return SearchDiagnostics(
             dense=hybrid_result.dense, sparse=hybrid_result.sparse, fused=hybrid_result.fused,
             reranked_ids=reranked_ids, results=results, query_variants=query_variants,
+            query_expansion_status=query_expansion_outcome.status,
+            reranker_status=rerank_outcome.status,
         )
 
     async def _save_search_log(
@@ -204,6 +241,8 @@ class SearchService:
         latency_embed_query_ms: float,
         latency_hybrid_search_ms: float,
         latency_rerank_ms: float,
+        query_expansion_status: str,
+        reranker_status: str,
     ) -> None:
         """Пишет журнал поискового запроса (Этап 8). Отказ записи не должен ронять сам поиск —
         перехватывается и логируется как предупреждение (FASTAPI_PATTERNS.md, раздел 9)."""
@@ -219,6 +258,8 @@ class SearchService:
             rrf_candidates=[list(item) for item in hybrid_result.fused],
             reranked_chunk_ids=reranked_ids,
             final_response=[result.model_dump() for result in results],
+            query_expansion_status=query_expansion_status,
+            reranker_status=reranker_status,
             latency_query_expansion_ms=latency_query_expansion_ms,
             latency_embed_query_ms=latency_embed_query_ms,
             latency_hybrid_search_ms=latency_hybrid_search_ms,

@@ -20,10 +20,23 @@ from qdrant_client import models
 SPARSE_VECTOR_NAME = 'bm25'
 
 _WORD_PATTERN = re.compile(r'\w+', re.UNICODE)
+_LEGAL_NORMALIZATION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r'\bст\.', re.IGNORECASE), 'статья'),
+    (re.compile(r'\bтк\s+рф\b', re.IGNORECASE), 'трудовой кодекс'),
+    (re.compile(r'\bфз\b', re.IGNORECASE), 'федеральный закон'),
+)
+
+
+def normalize_sparse_text(text: str) -> str:
+    """Нормализует частые русские юридические формы перед sparse-токенизацией."""
+    normalized = text.lower().replace('ё', 'е')
+    for pattern, replacement in _LEGAL_NORMALIZATION_PATTERNS:
+        normalized = pattern.sub(replacement, normalized)
+    return normalized
 
 
 def tokenize(text: str) -> list[str]:
-    return _WORD_PATTERN.findall(text.lower())
+    return _WORD_PATTERN.findall(normalize_sparse_text(text))
 
 
 def text_to_sparse_vector(text: str) -> models.SparseVector:

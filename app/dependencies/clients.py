@@ -43,6 +43,8 @@ def get_enrichment_llm_client(httpx_client: HttpClientDep) -> LlmClient:
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {settings.polza_api_key.get_secret_value()}',
         },
+        timeout=settings.polza_enrichment_timeout_seconds,
+        retries=settings.polza_enrichment_retries,
         circuit_breaker=_polza_enrichment_breaker,
     )
 
@@ -83,6 +85,8 @@ def get_reranker_llm_client(httpx_client: HttpClientDep) -> LlmClient:
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {settings.polza_api_key.get_secret_value()}',
         },
+        timeout=settings.polza_reranker_timeout_seconds,
+        retries=settings.polza_reranker_retries,
         circuit_breaker=_polza_reranker_breaker,
     )
 
@@ -107,6 +111,8 @@ def get_query_expansion_llm_client(httpx_client: HttpClientDep) -> LlmClient:
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {settings.polza_api_key.get_secret_value()}',
         },
+        timeout=settings.polza_query_expansion_timeout_seconds,
+        retries=settings.polza_query_expansion_retries,
         circuit_breaker=_polza_query_expansion_breaker,
     )
 

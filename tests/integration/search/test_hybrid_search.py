@@ -193,3 +193,78 @@ async def test_hybrid_search_balances_candidates_across_categories(imbalanced_ca
 
     fused_ids = [chunk_id for chunk_id, _ in result.fused]
     assert case_law_chunk_id in fused_ids
+
+
+@pytest_asyncio.fixture
+async def question_vector_store():
+    """Коллекция, где целевой чанк плохо совпадает основным `chunk`-вектором,
+    но идеально совпадает вектором гипотетического вопроса `question_0`."""
+    settings = get_settings().qdrant
+    client = AsyncQdrantClient(url=settings.qdrant_url)
+    collection_name = f'test_{uuid4().hex}'
+    store = QdrantVectorStore(client=client, collection_name=collection_name, vector_dim=VECTOR_DIM)
+    await store.ensure_collection()
+
+    metadata = DocumentMetadataInput(
+        source_title='Источник', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+    )
+
+    for i in range(DENSE_TOP_K + 5):
+        chunk = Chunk(
+            chunk_id=str(uuid4()), chunk_index=i, chunk_number_in_section=i,
+            document_id='distractors', parent_id='distractors', category='labor_code',
+            section_index=0, section_number=None, section_title='Секция',
+            text=f'Нерелевантный фрагмент {i}.',
+        )
+        enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])
+        embedded = EmbeddedChunk(
+            enriched_chunk=enriched,
+            chunk_vector=[1.0, 0.0, 0.0, 0.0],
+            question_vectors=[[0.0, 1.0, 0.0, 0.0]],
+        )
+        await store.upsert_chunk(embedded, metadata)
+
+    target_chunk = Chunk(
+        chunk_id=str(uuid4()), chunk_index=100, chunk_number_in_section=0,
+        document_id='target', parent_id='target', category='labor_code',
+        section_index=0, section_number=None, section_title='Секция',
+        text='Работодатель обязан соблюдать квоту для приема на работу инвалидов.',
+    )
+    target_enriched = EnrichedChunk(
+        chunk=target_chunk,
+        synthetic_title='Квота для работодателя',
+        hypothetical_questions=['Как работодателю выполнить квоту для инвалидов?'],
+    )
+    target_embedded = EmbeddedChunk(
+        enriched_chunk=target_enriched,
+        chunk_vector=[0.0, 1.0, 0.0, 0.0],
+        question_vectors=[[1.0, 0.0, 0.0, 0.0]],
+    )
+    await store.upsert_chunk(target_embedded, metadata)
+
+    yield store, target_chunk.chunk_id
+
+    await client.delete_collection(collection_name)
+    await client.close()
+
+
+async def test_hybrid_search_uses_hypothetical_question_vectors(question_vector_store):
+    """Гипотетические вопросы должны участвовать в dense retrieval: целевой
+    чанк не попадает в плоский dense top-K по `chunk`, но попадает в RRF
+    через lane `question_0`."""
+    store, target_chunk_id = question_vector_store
+
+    chunk_dense_results = await dense_search(
+        store.client, store.collection_name,
+        query_vector=[1.0, 0.0, 0.0, 0.0],
+        filters=SearchFilters(category='labor_code'),
+    )
+    result = await hybrid_search(
+        store.client, store.collection_name,
+        query_vector=[1.0, 0.0, 0.0, 0.0],
+        query_text='несовпадающий sparse запрос',
+        filters=SearchFilters(category='labor_code'),
+    )
+
+    assert target_chunk_id not in [chunk_id for chunk_id, _ in chunk_dense_results]
+    assert target_chunk_id in [chunk_id for chunk_id, _ in result.fused]

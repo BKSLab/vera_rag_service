@@ -5,6 +5,7 @@ import pytest_asyncio
 from qdrant_client import AsyncQdrantClient, models
 
 from app.core.settings import get_settings
+from app.exceptions.vectorstore import QdrantCollectionSchemaError
 from app.models.schemas import Chunk, DocumentMetadataInput, EmbeddedChunk, EnrichedChunk
 from app.vectorstore.qdrant_client import (
     CHUNK_VECTOR_NAME,
@@ -112,6 +113,22 @@ async def test_ensure_collection_is_idempotent(vector_store):
 
     info = await vector_store.client.get_collection(vector_store.collection_name)
     assert info is not None
+
+
+async def test_ensure_collection_raises_for_incompatible_existing_collection(vector_store):
+    await vector_store.client.create_collection(
+        collection_name=vector_store.collection_name,
+        vectors_config={
+            CHUNK_VECTOR_NAME: models.VectorParams(size=VECTOR_DIM + 1, distance=models.Distance.COSINE),
+        },
+    )
+
+    try:
+        await vector_store.ensure_collection()
+    except QdrantCollectionSchemaError as error:
+        assert 'размерность' in str(error)
+    else:
+        raise AssertionError('ensure_collection должен упасть на несовместимой схеме Qdrant')
 
 
 async def test_upsert_chunk_makes_point_retrievable_with_metadata_payload(vector_store):
@@ -223,3 +240,24 @@ async def test_list_chunks_filters_by_version_when_given(vector_store):
 
     assert len(chunks) == 1
     assert chunks[0]['version'] == '2025-01-01'
+
+
+async def test_count_actual_document_chunks_ignores_inactive_chunks(vector_store):
+    await vector_store.ensure_collection()
+    chunk_v1 = make_embedded_chunk(document_id='fz-181', chunk_index=0)
+    chunk_v2 = make_embedded_chunk(document_id='fz-181', chunk_index=1)
+    metadata_v1 = DocumentMetadataInput(
+        source_title='ФЗ-181', audience='both', topic='quota', version='2025-01-01', effective_date=date(2025, 1, 1)
+    )
+    metadata_v2 = DocumentMetadataInput(
+        source_title='ФЗ-181', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+    )
+    await vector_store.upsert_chunk(chunk_v1, metadata_v1)
+    await vector_store.upsert_chunk(chunk_v2, metadata_v2)
+    await vector_store.set_chunks_inactive([chunk_v1.enriched_chunk.chunk.chunk_id], effective_until=date(2026, 1, 1))
+
+    inactive_count = await vector_store.count_actual_document_chunks('fz-181', '2025-01-01')
+    actual_count = await vector_store.count_actual_document_chunks('fz-181', '2026-01-01')
+
+    assert inactive_count == 0
+    assert actual_count == 1

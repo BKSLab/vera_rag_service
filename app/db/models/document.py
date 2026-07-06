@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, String, func
+from sqlalchemy import Boolean, Date, DateTime, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -19,6 +19,9 @@ class Document(Base):
     """
 
     __tablename__ = 'documents'
+    __table_args__ = (
+        UniqueConstraint('document_id', 'version', name='uq_documents_document_id_version'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, comment='Уникальный идентификатор записи реестра.')
     document_id: Mapped[str] = mapped_column(String(length=255), nullable=False, index=True, comment='Идентификатор документа-источника.')

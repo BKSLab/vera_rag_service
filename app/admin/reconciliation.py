@@ -8,8 +8,7 @@ from app.vectorstore.qdrant_client import QdrantVectorStore
 async def find_active_documents_missing_in_qdrant(
     db_session: AsyncSession, vector_store: QdrantVectorStore
 ) -> list[tuple[str, str]]:
-    """Находит версии документов, активные в реестре Postgres, но без
-    соответствующих чанков в Qdrant (ING-5,
+    """Находит версии документов, активные в Postgres, но без актуальных чанков в Qdrant (ING-5,
     AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md).
 
     Дешёвая часть `ingest_document` (запись реестра) и дорогая (upsert в
@@ -25,8 +24,8 @@ async def find_active_documents_missing_in_qdrant(
 
     Returns:
         Список (document_id, version) для активных записей реестра, у
-        которых не нашлось ни одного чанка в Qdrant. Пустой список, если
-        расхождений нет.
+        которых нет ни одного поисково-доступного чанка (`is_actual=True`)
+        в Qdrant. Пустой список, если расхождений нет.
     """
     active_documents = (
         await db_session.execute(select(Document.document_id, Document.version).where(Document.is_active.is_(True)))
@@ -34,8 +33,8 @@ async def find_active_documents_missing_in_qdrant(
 
     mismatches: list[tuple[str, str]] = []
     for document_id, version in active_documents:
-        versions_in_qdrant = await vector_store.get_document_versions(document_id)
-        if version not in versions_in_qdrant:
+        actual_chunks_count = await vector_store.count_actual_document_chunks(document_id, version)
+        if actual_chunks_count == 0:
             mismatches.append((document_id, version))
 
     return mismatches
