@@ -69,13 +69,14 @@
       {% if diagnostics.results %}
       <table class="table table-vcenter">
         <thead>
-          <tr><th>#</th><th>Заголовок</th><th>Источник</th><th>Категория</th><th>Аудитория</th><th>Тема</th><th>RRF score</th><th>Текст</th></tr>
+          <tr><th>#</th><th>Заголовок</th><th>Основание</th><th>Источник</th><th>Категория</th><th>Аудитория</th><th>Тема</th><th>RRF score</th><th>Текст</th></tr>
         </thead>
         <tbody>
           {% for chunk in diagnostics.results %}
           <tr>
             <td>{{ loop.index }}</td>
             <td>{{ chunk.synthetic_title }}</td>
+            <td>{{ chunk.section_title or '—' }}</td>
             <td>{{ chunk.source_title }}</td>
             <td>{{ chunk.category }}</td>
             <td>{{ chunk.audience }}</td>
