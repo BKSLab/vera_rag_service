@@ -5,6 +5,7 @@ from fastapi import Depends
 from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.core.circuit_breaker import CircuitBreaker
+from app.core.rate_limiter import RateLimiter
 from app.core.settings import get_settings
 from app.dependencies.http_client import HttpClientDep
 
@@ -18,6 +19,15 @@ _yandex_embedding_breaker = CircuitBreaker()
 _polza_reranker_breaker = CircuitBreaker()
 _polza_enrichment_breaker = CircuitBreaker()
 _polza_query_expansion_breaker = CircuitBreaker()
+
+# Реальный лимит Yandex Embedding API — 10 запросов/сек на аккаунт (узнали
+# из тела ответа 429, "allowed 10 requests"), общий и на ingestion
+# (doc-модель), и на query-time эмбеддинг поиска (query-модель) — отсюда
+# module-level singleton, а не поле EmbeddingClient (тот DI создаёт заново
+# на каждый HTTP-запрос, независимый rate limiter на каждый экземпляр не
+# делил бы общую квоту). 8, не 10 — запас на неточность таймера и на то,
+# что ingestion и поиск могут одновременно расходовать одну и ту же квоту.
+_yandex_embedding_rate_limiter = RateLimiter(rate_per_second=8)
 
 
 def get_enrichment_llm_client(httpx_client: HttpClientDep) -> LlmClient:
@@ -63,6 +73,7 @@ def get_embedding_client(httpx_client: HttpClientDep) -> EmbeddingClient:
         },
         circuit_breaker=_yandex_embedding_breaker,
         vector_dimension=settings.yandex_embedding_dim,
+        rate_limiter=_yandex_embedding_rate_limiter,
     )
 
 

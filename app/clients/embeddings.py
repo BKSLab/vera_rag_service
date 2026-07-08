@@ -6,6 +6,7 @@ import httpx
 
 from app.core.circuit_breaker import CircuitBreaker
 from app.core.config_logger import logger
+from app.core.rate_limiter import RateLimiter
 from app.exceptions.embedding import (
     EmbeddingApiRequestError,
     EmbeddingClientContentError,
@@ -39,6 +40,7 @@ class EmbeddingClient:
         max_delay: float = DEFAULT_MAX_RETRY_DELAY,
         circuit_breaker: CircuitBreaker | None = None,
         vector_dimension: int | None = None,
+        rate_limiter: RateLimiter | None = None,
     ):
         """Инициализирует клиент.
 
@@ -54,6 +56,12 @@ class EmbeddingClient:
             circuit_breaker: Общий module-level singleton (LLM-2,
                 AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md), переживающий
                 конкретный HTTP-запрос. None — без circuit breaker.
+            rate_limiter: Общий module-level singleton (`app/core/rate_limiter.py`),
+                ограничивающий частоту запросов к провайдеру — в отличие от
+                concurrency-семафора вызывающего кода (`EMBEDDING_CONCURRENCY`),
+                защищает именно от превышения rate-лимита провайдера
+                (обнаружено 2026-07-08 — семафора для этого недостаточно).
+                None — без ограничения частоты.
         """
         self.httpx_client = httpx_client
         self.url = url
@@ -64,6 +72,7 @@ class EmbeddingClient:
         self.max_delay = max_delay
         self.circuit_breaker = circuit_breaker
         self.vector_dimension = vector_dimension
+        self.rate_limiter = rate_limiter
 
     def _get_backoff_delay(self, attempt: int) -> float:
         base_delay = min(self.max_delay, self.delay * (2 ** (attempt - 1)))
@@ -80,6 +89,8 @@ class EmbeddingClient:
         if self.vector_dimension is not None:
             payload['dim'] = self.vector_dimension
         data_json = json.dumps(payload, ensure_ascii=False)
+        if self.rate_limiter is not None:
+            await self.rate_limiter.acquire()
         try:
             response = await self.httpx_client.post(
                 url=self.url,

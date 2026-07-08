@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 
@@ -27,6 +29,38 @@ async def test_get_embedding_returns_vector_on_success():
     result = await client.get_embedding(text='текст', model_uri='emb://folder/model/latest')
 
     assert result == [0.1, 0.2, 0.3]
+
+
+async def test_get_embedding_calls_rate_limiter_acquire_before_request():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={'embedding': [0.1, 0.2]})
+
+    fake_rate_limiter = AsyncMock()
+    client = _make_client(handler, rate_limiter=fake_rate_limiter)
+
+    await client.get_embedding(text='текст', model_uri='emb://folder/model/latest')
+
+    fake_rate_limiter.acquire.assert_awaited_once()
+
+
+async def test_get_embedding_calls_rate_limiter_acquire_on_every_retry():
+    """Ретраи — тоже реальные HTTP-запросы, которые считаются в квоту
+    провайдера (обнаружено на реальном Yandex Embedding API 2026-07-08) —
+    лимитер должен ограничивать частоту каждой попытки, а не только первой."""
+    attempts = {'count': 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts['count'] += 1
+        if attempts['count'] < 2:
+            return httpx.Response(500, text='internal error')
+        return httpx.Response(200, json={'embedding': [0.4, 0.5]})
+
+    fake_rate_limiter = AsyncMock()
+    client = _make_client(handler, retries=3, rate_limiter=fake_rate_limiter)
+
+    await client.get_embedding(text='текст', model_uri='emb://folder/model/latest')
+
+    assert fake_rate_limiter.acquire.await_count == 2
 
 
 async def test_get_embedding_retries_on_http_error_then_succeeds():
