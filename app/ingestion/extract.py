@@ -57,6 +57,18 @@ def _extract_paragraph_text(paragraph_element: _Element, document: Document) -> 
     извлечения текста с картинок — там это делалось через LLM Vision,
     здесь не нужно (см. AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md, обсуждение
     с пользователем 2026-06-21).
+
+    Номера "вставленных" статей нормативных актов (статья 133¹, 195²) в Word
+    оформляются надстрочным индексом без отдельного символа-разделителя —
+    голый текст рана даёт только цифру. Без реконструкции разделителя
+    "133" + надстрочная "1" схлопываются в "1331", неотличимое от другого
+    реального номера статьи (обнаружено на реальном ТК РФ 2026-07-08:
+    "Статья 1331" вместо настоящей "Статья 133.1"). Если цифровой ран
+    помечен как superscript и оба соседних символа — цифры, перед ним
+    вставляется точка. Superscript в реальном документе оформлен ссылкой на
+    именованный character-стиль (`w:rStyle`), а не прямым свойством рана —
+    `run.font.superscript` его не видит, поэтому проверяется дополнительно
+    и разрешённый стиль рана (`run.style.font.superscript`).
     """
     paragraph = docx.text.paragraph.Paragraph(paragraph_element, document)
     runs_and_hyperlinks: list[_Element] = ElementTree(paragraph_element).xpath(
@@ -69,7 +81,12 @@ def _extract_paragraph_text(paragraph_element: _Element, document: Document) -> 
         if tag == 'hyperlink':
             text += _extract_hyperlink_text(element)
         else:
-            text += docx.text.run.Run(element, paragraph).text or ''
+            run = docx.text.run.Run(element, paragraph)
+            run_text = run.text or ''
+            is_superscript = run.font.superscript or (run.style is not None and run.style.font.superscript)
+            if is_superscript and text[-1:].isdigit() and run_text[:1].isdigit():
+                text += '.'
+            text += run_text
     return text
 
 

@@ -75,6 +75,63 @@ def test_extract_text_from_upload_decodes_docx_table_cells():
     assert 'Ячейка 2' in result
 
 
+def test_extract_text_from_upload_reconstructs_dot_before_superscript_article_suffix():
+    """Номер "вставленной" статьи (133¹ = статья 133.1) оформлен в Word как
+    обычный ран "Статья 133" + надстрочный ран "1" без разделителя между
+    ними — без реконструкции точки текст схлопнулся бы в "Статья 1331",
+    неотличимое от другого реального номера статьи (найдено на реальном
+    ТК РФ 2026-07-08)."""
+    document = docx.Document()
+    paragraph = document.add_paragraph('Статья 133')
+    superscript_run = paragraph.add_run('1')
+    superscript_run.font.superscript = True
+    paragraph.add_run('. Установление размера минимальной заработной платы')
+    buffer = BytesIO()
+    document.save(buffer)
+
+    result = extract_text_from_upload('doc.docx', buffer.getvalue())
+
+    assert result == 'Статья 133.1. Установление размера минимальной заработной платы'
+
+
+def test_extract_text_from_upload_reconstructs_dot_for_superscript_via_named_style():
+    """В реальном ТК РФ (2026-07-08) superscript оформлен не прямым
+    свойством рана, а ссылкой на именованный character-стиль (`w:rStyle`) —
+    `run.font.superscript` его не видит, нужно разрешать `run.style`."""
+    from docx.enum.style import WD_STYLE_TYPE
+
+    document = docx.Document()
+    style = document.styles.add_style('SuperscriptStyle', WD_STYLE_TYPE.CHARACTER)
+    style.font.superscript = True
+
+    paragraph = document.add_paragraph('Статья 133')
+    styled_run = paragraph.add_run('1')
+    styled_run.style = style
+    paragraph.add_run('. Установление размера минимальной заработной платы')
+    buffer = BytesIO()
+    document.save(buffer)
+
+    result = extract_text_from_upload('doc.docx', buffer.getvalue())
+
+    assert result == 'Статья 133.1. Установление размера минимальной заработной платы'
+
+
+def test_extract_text_from_upload_does_not_insert_dot_for_non_adjacent_superscript():
+    """Надстрочный текст, не примыкающий к цифре с обеих сторон (например,
+    сноска после буквы), не должен получать искусственную точку — вставка
+    оправдана только для случая "цифра + надстрочная цифра"."""
+    document = docx.Document()
+    paragraph = document.add_paragraph('Примечание')
+    superscript_run = paragraph.add_run('1')
+    superscript_run.font.superscript = True
+    buffer = BytesIO()
+    document.save(buffer)
+
+    result = extract_text_from_upload('doc.docx', buffer.getvalue())
+
+    assert result == 'Примечание1'
+
+
 def test_extract_text_from_upload_raises_when_pdf_has_too_many_pages():
     """ADM-6/ING-7/SEC-4 — лимит числа страниц PDF проверяется до
     извлечения текста по каждой странице (самая дорогая операция)."""
