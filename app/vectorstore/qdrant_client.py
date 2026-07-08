@@ -36,6 +36,15 @@ HYPOTHETICAL_QUESTIONS_PAYLOAD_FIELD = 'hypothetical_questions'
 PAYLOAD_INDEX_KEYWORD_FIELDS = ('category', 'audience', 'document_id', 'version', 'topics', 'parent_id')
 PAYLOAD_INDEX_BOOL_FIELDS = ('is_actual',)
 
+# Максимум точек в одном upsert-запросе (QdrantVectorStore.upsert_chunks).
+# Одна точка несёт 6 векторов (768d каждый) + полный текст/синтетический
+# заголовок/гипотетические вопросы — на реальном ТК РФ (765 чанков) один
+# запрос на весь документ разом дал ~70.8 МБ и был отвергнут Qdrant (лимит
+# тела запроса по умолчанию — 32 МБ), уронив upsert уже после дорогого
+# обогащения и эмбеддинга всего документа (обнаружено 2026-07-08). 100 —
+# с большим запасом даже для чанков длиннее средних по ТК РФ.
+UPSERT_BATCH_SIZE = 100
+
 
 def build_chunk_metadata(
     embedded_chunk: EmbeddedChunk, document_metadata: DocumentMetadataInput
@@ -241,7 +250,16 @@ class QdrantVectorStore:
     async def upsert_chunks(
         self, embedded_chunks: list[EmbeddedChunk], document_metadata: DocumentMetadataInput
     ) -> None:
-        """Upsert батча чанков одного документа в Qdrant.
+        """Upsert батча чанков одного документа в Qdrant, партиями по `UPSERT_BATCH_SIZE`.
+
+        Один HTTP-запрос на весь документ разом не годится: точка несёт
+        6 векторов (768d) + полный текст/вопросы, и на реальном ТК РФ
+        (765 чанков) один такой запрос дал ~70.8 МБ — Qdrant отверг его
+        целиком (`400 Bad Request`, лимит тела запроса по умолчанию —
+        32 МБ), уронив upsert уже ПОСЛЕ дорогого обогащения и эмбеддинга
+        всего документа (обнаружено 2026-07-08). Порог в 100 точек на
+        запрос — с большим запасом даже для документов с более длинными
+        чанками, чем средние по ТК РФ.
 
         Args:
             embedded_chunks: Чанки с векторами — результат Этапа 4.
@@ -269,7 +287,9 @@ class QdrantVectorStore:
             )
 
         logger.info('💾 Upsert %d чанков в коллекцию %s.', len(points), self.collection_name)
-        await self.client.upsert(collection_name=self.collection_name, points=points)
+        for batch_start in range(0, len(points), UPSERT_BATCH_SIZE):
+            batch = points[batch_start:batch_start + UPSERT_BATCH_SIZE]
+            await self.client.upsert(collection_name=self.collection_name, points=batch)
         logger.info('✅ Upsert завершён: %d чанков.', len(points))
 
     async def delete_document(self, document_id: str, version: str | None = None) -> None:

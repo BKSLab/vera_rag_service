@@ -12,6 +12,7 @@ from app.vectorstore.qdrant_client import (
     PAYLOAD_INDEX_BOOL_FIELDS,
     PAYLOAD_INDEX_KEYWORD_FIELDS,
     QUESTION_VECTOR_NAMES,
+    UPSERT_BATCH_SIZE,
     QdrantVectorStore,
 )
 from app.vectorstore.sparse import SPARSE_VECTOR_NAME
@@ -153,6 +154,23 @@ async def test_upsert_chunk_makes_point_retrievable_with_metadata_payload(vector
     assert QUESTION_VECTOR_NAMES[2] in point.vector
     assert QUESTION_VECTOR_NAMES[3] not in point.vector
     assert SPARSE_VECTOR_NAME in point.vector
+
+
+async def test_upsert_chunks_splits_into_batches_without_losing_points(vector_store):
+    """Обнаружено на реальном ТК РФ (765 чанков, 2026-07-08): один upsert-запрос
+    на весь документ разом превысил лимит тела запроса Qdrant (32 МБ) и упал
+    целиком уже после дорогого обогащения+эмбеддинга. `upsert_chunks` теперь
+    бьёт на батчи по `UPSERT_BATCH_SIZE` — здесь проверяем на количестве
+    заметно больше одного батча, что батчинг не теряет и не дублирует точки."""
+    await vector_store.ensure_collection()
+    chunk_count = UPSERT_BATCH_SIZE * 2 + 17  # заведомо больше одного батча, не круглое число
+    embedded_chunks = [make_embedded_chunk(document_id='fz-181', chunk_index=i) for i in range(chunk_count)]
+    document_metadata = make_document_metadata()
+
+    await vector_store.upsert_chunks(embedded_chunks, document_metadata)
+
+    count_result = await vector_store.client.count(collection_name=vector_store.collection_name, exact=True)
+    assert count_result.count == chunk_count
 
 
 async def test_delete_document_removes_all_its_chunks(vector_store):
