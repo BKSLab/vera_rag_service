@@ -47,13 +47,13 @@ async def test_delete_document_removes_chunks_and_registry_row(vector_store, db_
     await document_repository.save_document(
         Document(
             document_id=document_id, version='2026-01-01', category='labor_code',
-            source_title='Источник', audience='both', topic='quota',
+            source_title='Источник', audience='both', topics=['quota'],
             effective_date=date(2026, 1, 1), is_active=True,
         )
     )
     embedded_chunk = make_embedded_chunk(document_id)
     metadata = DocumentMetadataInput(
-        source_title='Источник', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='Источник', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
     await vector_store.upsert_chunk(embedded_chunk, metadata)
 

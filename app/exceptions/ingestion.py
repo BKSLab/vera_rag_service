@@ -21,6 +21,30 @@ class RawTextTooLargeError(Exception):
         )
 
 
+class TopicsNotAllowedForCategoryError(Exception):
+    """Темы заданы для категории, где они не осмысленны (API-3, обсуждение
+    с пользователем 2026-07-08).
+
+    `labor_code`/`federal_law` — широкие кодексы/законы, регулирующие
+    десятки разных тем одновременно: свести это к одной-двум темам на
+    документ означало бы соврать или обесценить фильтр. Темы допустимы
+    только для узких по предмету категорий (см. `TOPICS_ALLOWED_CATEGORIES`,
+    `app/models/schemas.py`).
+    """
+
+    def __init__(self, document_id: str, category: str, topics: list[str]):
+        self.document_id = document_id
+        self.category = category
+        self.topics = topics
+        super().__init__(self.__str__())
+
+    def __str__(self) -> str:
+        return (
+            f'Документ {self.document_id} (category={self.category!r}) не может иметь темы '
+            f'{self.topics!r} — темы допустимы только для other_npa/case_law/authorial.'
+        )
+
+
 class TooManyChunksError(Exception):
     """Документ дал больше чанков, чем разумный верхний предел одного документа (API-3).
 

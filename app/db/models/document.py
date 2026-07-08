@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, String, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -29,7 +30,9 @@ class Document(Base):
     category: Mapped[str] = mapped_column(String(length=20), nullable=False, comment='Категория источника (раздел 3 плана).')
     source_title: Mapped[str] = mapped_column(String(length=255), nullable=False, comment='Человекочитаемое название источника.')
     audience: Mapped[str] = mapped_column(String(length=20), nullable=False, comment='Целевая аудитория документа.')
-    topic: Mapped[str] = mapped_column(String(length=100), nullable=False, comment='Тема документа.')
+    topics: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, comment='Темы документа (раздел 3 плана) — пусто для labor_code/federal_law.',
+    )
     effective_date: Mapped[date] = mapped_column(Date, nullable=False, comment='Дата вступления редакции в силу.')
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment='Признак активной (актуальной) версии — неактивные хранятся для аудита.')
     created_at: Mapped[datetime] = mapped_column(

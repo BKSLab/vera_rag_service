@@ -14,7 +14,7 @@ async def test_save_document_persists_all_fields(db_session):
         category='federal_law',
         source_title='ФЗ-181, Статья 21',
         audience='both',
-        topic='quota',
+        topics=['quota'],
         effective_date=date(2026, 1, 1),
         is_active=True,
     )
@@ -34,11 +34,11 @@ async def test_mark_versions_inactive_updates_only_given_versions(db_session):
     repository = DocumentRepository(db_session)
     old_version = Document(
         document_id='fz-181-art21', version='2025-01-01', category='federal_law',
-        source_title='ФЗ-181', audience='both', topic='quota', effective_date=date(2025, 1, 1), is_active=True,
+        source_title='ФЗ-181', audience='both', topics=['quota'], effective_date=date(2025, 1, 1), is_active=True,
     )
     new_version = Document(
         document_id='fz-181-art21', version='2026-01-01', category='federal_law',
-        source_title='ФЗ-181', audience='both', topic='quota', effective_date=date(2026, 1, 1), is_active=True,
+        source_title='ФЗ-181', audience='both', topics=['quota'], effective_date=date(2026, 1, 1), is_active=True,
     )
     await repository.save_document(old_version)
     await repository.save_document(new_version)
@@ -61,7 +61,7 @@ async def test_save_document_upserts_same_document_version(db_session):
             category='federal_law',
             source_title='Старое название',
             audience='both',
-            topic='quota',
+            topics=['quota'],
             effective_date=date(2026, 1, 1),
             is_active=False,
         )
@@ -74,7 +74,7 @@ async def test_save_document_upserts_same_document_version(db_session):
             category='labor_code',
             source_title='Новое название',
             audience='employer',
-            topic='workplace',
+            topics=['workplace'],
             effective_date=date(2026, 2, 1),
             is_active=True,
         )
@@ -93,6 +93,6 @@ async def test_save_document_upserts_same_document_version(db_session):
     assert saved.category == 'labor_code'
     assert saved.source_title == 'Новое название'
     assert saved.audience == 'employer'
-    assert saved.topic == 'workplace'
+    assert saved.topics == ['workplace']
     assert saved.effective_date == date(2026, 2, 1)
     assert saved.is_active is True

@@ -50,7 +50,7 @@ class DocumentRepository:
                 'category': document.category,
                 'source_title': document.source_title,
                 'audience': document.audience,
-                'topic': document.topic,
+                'topics': document.topics,
                 'effective_date': document.effective_date,
                 'is_active': document.is_active,
             }
@@ -63,7 +63,7 @@ class DocumentRepository:
                         'category': values['category'],
                         'source_title': values['source_title'],
                         'audience': values['audience'],
-                        'topic': values['topic'],
+                        'topics': values['topics'],
                         'effective_date': values['effective_date'],
                         'is_active': values['is_active'],
                     },

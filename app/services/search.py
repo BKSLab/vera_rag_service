@@ -202,7 +202,7 @@ class SearchService:
                 synthetic_title=payload_by_id[chunk_id][SYNTHETIC_TITLE_PAYLOAD_FIELD],
                 source_title=payload_by_id[chunk_id]['source_title'],
                 audience=payload_by_id[chunk_id]['audience'],
-                topic=payload_by_id[chunk_id]['topic'],
+                topics=payload_by_id[chunk_id].get('topics', []),
                 category=payload_by_id[chunk_id]['category'],
                 section_number=payload_by_id[chunk_id].get('section_number'),
                 section_title=payload_by_id[chunk_id].get('section_title'),

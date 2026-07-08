@@ -30,7 +30,7 @@ async def vector_store():
 def make_document_row(document_id: str, version: str) -> Document:
     return Document(
         document_id=document_id, version=version, category='labor_code',
-        source_title='Источник', audience='both', topic='quota',
+        source_title='Источник', audience='both', topics=['quota'],
         effective_date=date(2026, 1, 1), is_active=True,
     )
 
@@ -48,7 +48,7 @@ async def test_find_active_documents_missing_in_qdrant_returns_empty_when_consis
     enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])
     embedded = EmbeddedChunk(enriched_chunk=enriched, chunk_vector=[0.1, 0.2, 0.3, 0.4], question_vectors=[])
     metadata = DocumentMetadataInput(
-        source_title='Источник', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='Источник', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
     await vector_store.upsert_chunk(embedded, metadata)
 
@@ -84,7 +84,7 @@ async def test_find_active_documents_missing_in_qdrant_detects_version_without_a
     enriched = EnrichedChunk(chunk=chunk, synthetic_title='Заголовок', hypothetical_questions=['В1?', 'В2?', 'В3?'])
     embedded = EmbeddedChunk(enriched_chunk=enriched, chunk_vector=[0.1, 0.2, 0.3, 0.4], question_vectors=[])
     metadata = DocumentMetadataInput(
-        source_title='Источник', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='Источник', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
     await vector_store.upsert_chunk(embedded, metadata)
     await vector_store.set_chunks_inactive([chunk.chunk_id], effective_until=date(2026, 2, 1))

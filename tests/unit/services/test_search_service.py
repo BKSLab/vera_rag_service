@@ -14,7 +14,7 @@ CHUNK_PAYLOAD = {
     'synthetic_title': 'Квота',
     'source_title': 'ФЗ-181, Статья 21',
     'audience': 'employer',
-    'topic': 'quota',
+    'topics': ['quota'],
     'category': 'federal_law',
 }
 

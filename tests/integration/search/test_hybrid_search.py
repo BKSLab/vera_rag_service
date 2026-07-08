@@ -40,7 +40,7 @@ async def populated_store():
 
     for embedded_chunk, audience in embedded_chunks:
         metadata = DocumentMetadataInput(
-            source_title='Источник', audience=audience, topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+            source_title='Источник', audience=audience, topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
         )
         await store.upsert_chunk(embedded_chunk, metadata)
 
@@ -131,7 +131,7 @@ async def imbalanced_category_store():
     await store.ensure_collection()
 
     metadata = DocumentMetadataInput(
-        source_title='Источник', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='Источник', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
 
     labor_code_chunks = []
@@ -206,7 +206,7 @@ async def question_vector_store():
     await store.ensure_collection()
 
     metadata = DocumentMetadataInput(
-        source_title='Источник', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='Источник', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
 
     for i in range(DENSE_TOP_K + 5):

@@ -51,7 +51,11 @@ def build_qdrant_filter(filters: SearchFilters | None) -> models.Filter:
                 )
             )
         if filters.topic is not None:
-            conditions.append(models.FieldCondition(key='topic', match=models.MatchValue(value=filters.topic)))
+            # Payload-поле `topics` — массив; `MatchValue` на массиве в
+            # Qdrant проверяет вхождение значения в список, а не точное
+            # равенство всего списка — фильтр остаётся "чанк содержит эту
+            # тему", даже если у чанка их несколько.
+            conditions.append(models.FieldCondition(key='topics', match=models.MatchValue(value=filters.topic)))
         if filters.category is not None:
             conditions.append(
                 models.FieldCondition(key='category', match=models.MatchValue(value=filters.category))

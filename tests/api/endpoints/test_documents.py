@@ -29,7 +29,7 @@ _SECTION_UPDATE_PAYLOAD = {
     'effective_date': '2026-01-01',
     'source_title': 'Трудовой кодекс Российской Федерации',
     'audience': 'both',
-    'topic': 'leave',
+    'topics': [],
 }
 
 

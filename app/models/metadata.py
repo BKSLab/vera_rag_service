@@ -29,7 +29,10 @@ class ChunkMetadata(BaseModel):
     category: Category = Field(..., description='Категория источника (раздел 3, Этап 5.1 плана).')
     source_title: str = Field(..., description='Человекочитаемое название источника.', examples=['ФЗ-181, Статья 21'])
     audience: Audience = Field(..., description='Целевая аудитория чанка.')
-    topic: str = Field(..., description='Тема чанка.', examples=['quota'])
+    topics: list[str] = Field(
+        default_factory=list, description='Темы чанка (раздел 3 плана) — пусто для labor_code/federal_law.',
+        examples=[['квотирование']],
+    )
     date_added: date = Field(..., description='Дата добавления чанка в базу знаний.')
     chunk_index: int = Field(..., description='Порядковый номер чанка в пределах документа.')
     chunk_number_in_section: int = Field(

@@ -33,7 +33,7 @@ HYPOTHETICAL_QUESTIONS_PAYLOAD_FIELD = 'hypothetical_questions'
 # особенно заметен.
 # `parent_id` (keyword) — адресация секции при гранулярном обновлении (Этап 13).
 # `is_actual` (bool) — дефолтный фильтр поиска, отсекающий исторические редакции.
-PAYLOAD_INDEX_KEYWORD_FIELDS = ('category', 'audience', 'document_id', 'version', 'topic', 'parent_id')
+PAYLOAD_INDEX_KEYWORD_FIELDS = ('category', 'audience', 'document_id', 'version', 'topics', 'parent_id')
 PAYLOAD_INDEX_BOOL_FIELDS = ('is_actual',)
 
 
@@ -59,7 +59,7 @@ def build_chunk_metadata(
         category=chunk.category,
         source_title=document_metadata.source_title,
         audience=document_metadata.audience,
-        topic=document_metadata.topic,
+        topics=document_metadata.topics,
         date_added=date.today(),
         chunk_index=chunk.chunk_index,
         chunk_number_in_section=chunk.chunk_number_in_section,

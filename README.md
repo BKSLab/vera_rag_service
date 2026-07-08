@@ -73,7 +73,7 @@ FastAPI · Qdrant (self-hosted, векторное хранилище, named + s
 |---|---|---|---|
 | `query` | `string` | да | Текст поискового запроса (минимум 1 символ). |
 | `audience` | `"seeker" \| "employer" \| "both"` | нет | Фильтр по целевой аудитории. `both` подходит под фильтр любой конкретной аудитории. |
-| `topic` | `string` | нет | Фильтр по теме (например, `quota`). |
+| `topic` | `string` | нет | Фильтр по теме — чанк проходит, если эта тема есть в его `topics` (см. `POST /ingest`). Осмысленно только для чанков категорий `other_npa`/`case_law`/`authorial` — у `labor_code`/`federal_law` `topics` всегда пуст. |
 | `category` | `"labor_code" \| "case_law" \| "federal_law" \| "other_npa" \| "authorial"` | нет | Фильтр по категории источника. Если не указан — категорийно-сбалансированный поиск по всем пяти. |
 | `top_k` | `int` | нет (по умолчанию `5`) | Сколько чанков вернуть после переранжирования, 1–20. |
 
@@ -95,7 +95,7 @@ FastAPI · Qdrant (self-hosted, векторное хранилище, named + s
       "synthetic_title": "Заголовок, сгенерированный LLM",
       "source_title": "ФЗ-181, Статья 21",
       "audience": "both",
-      "topic": "quota",
+      "topics": ["квотирование"],
       "category": "federal_law",
       "section_number": "21",
       "section_title": "Статья 21. Права инвалидов в области занятости",
@@ -121,7 +121,7 @@ FastAPI · Qdrant (self-hosted, векторное хранилище, named + s
 | `raw_text` | `string` | да | Текст документа (уже декодированный — PDF/DOCX/MD/TXT декодирует только админка). До 1 000 000 символов. |
 | `source_title` | `string` | да | Человекочитаемое название источника. |
 | `audience` | `"seeker" \| "employer" \| "both"` | да | Целевая аудитория. |
-| `topic` | `string` | да | Тема документа. |
+| `topics` | `string[]` | нет | Темы документа. Допустимы только для `other_npa`/`case_law`/`authorial` (справочник — `/admin/topic`) — для `labor_code`/`federal_law` список должен быть пустым, иначе `422`. |
 | `version` | `string` | да | Дата редакции документа, например `2026-01-01`. |
 | `effective_date` | `date` | да | Дата вступления редакции в силу. |
 
@@ -166,7 +166,7 @@ FastAPI · Qdrant (self-hosted, векторное хранилище, named + s
 | `effective_date` | `date` | Дата вступления новой редакции в силу. |
 | `source_title` | `string` | Название документа. |
 | `audience` | `"seeker" \| "employer" \| "both"` | Целевая аудитория. |
-| `topic` | `string` | Тема. |
+| `topics` | `string[]` | Темы — допустимы только для `other_npa` (единственная из `SECTION_UPDATE_ALLOWED_CATEGORIES`, где темы осмысленны). |
 
 **Ответ `200`:**
 ```json

@@ -5,7 +5,7 @@ from app.core.settings import get_settings
 from app.db.models.document import Document
 from app.embeddings.embedder import embed_chunks
 from app.exceptions.document import DocumentRepositoryError
-from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError
+from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError
 from app.ingestion.chunking import chunk_document, compute_parent_id
 from app.ingestion.enrichment import enrich_chunks
 from app.ingestion.preprocess import preprocess_document
@@ -13,6 +13,7 @@ from app.models.metadata import Category
 from app.models.schemas import (
     MAX_RAW_TEXT_LENGTH,
     SECTION_UPDATE_ALLOWED_CATEGORIES,
+    TOPICS_ALLOWED_CATEGORIES,
     DocumentMetadataInput,
     EmbeddedChunk,
     IngestResponse,
@@ -70,12 +71,16 @@ class IngestionService:
 
         Raises:
             RawTextTooLargeError: Если `raw_text` превышает `MAX_RAW_TEXT_LENGTH`.
+            TopicsNotAllowedForCategoryError: Если заданы темы для category,
+                где они не осмысленны (не в `TOPICS_ALLOWED_CATEGORIES`).
             TooManyChunksError: Если документ дал больше `MAX_CHUNKS_PER_DOCUMENT` чанков.
             LlmApiRequestError: Если обогащение хотя бы одного чанка не удалось.
             EmbeddingApiRequestError: Если эмбеддинг хотя бы одного чанка не удался.
         """
         if len(raw_text) > MAX_RAW_TEXT_LENGTH:
             raise RawTextTooLargeError(document_id, len(raw_text), MAX_RAW_TEXT_LENGTH)
+        if document_metadata.topics and category not in TOPICS_ALLOWED_CATEGORIES:
+            raise TopicsNotAllowedForCategoryError(document_id, category, document_metadata.topics)
 
         await self.document_repository.acquire_document_lock(document_id)
         try:
@@ -174,7 +179,7 @@ class IngestionService:
                     category=category,
                     source_title=document_metadata.source_title,
                     audience=document_metadata.audience,
-                    topic=document_metadata.topic,
+                    topics=document_metadata.topics,
                     effective_date=document_metadata.effective_date,
                     is_active=True,
                 )
@@ -206,12 +211,16 @@ class IngestionService:
 
         Raises:
             ValueError: Если category не поддерживает гранулярное обновление.
+            TopicsNotAllowedForCategoryError: Если заданы темы для category,
+                где они не осмысленны (не в `TOPICS_ALLOWED_CATEGORIES`).
         """
         if request.category not in SECTION_UPDATE_ALLOWED_CATEGORIES:
             raise ValueError(
                 f'Гранулярное обновление не поддерживается для category={request.category!r}. '
                 f'Допустимые: {sorted(SECTION_UPDATE_ALLOWED_CATEGORIES)}.'
             )
+        if request.topics and request.category not in TOPICS_ALLOWED_CATEGORIES:
+            raise TopicsNotAllowedForCategoryError(document_id, request.category, request.topics)
 
         parent_id = compute_parent_id(document_id, section_number)
 
@@ -226,7 +235,7 @@ class IngestionService:
         document_metadata = DocumentMetadataInput(
             source_title=request.source_title,
             audience=request.audience,
-            topic=request.topic,
+            topics=request.topics,
             version=request.version,
             effective_date=request.effective_date,
         )

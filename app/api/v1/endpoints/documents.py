@@ -5,6 +5,7 @@ from app.core.rate_limit import limiter
 from app.dependencies.auth import VerifyApiKeyDep
 from app.dependencies.services import DocumentsServiceDep, IngestionServiceDep
 from app.exceptions.embedding import EmbeddingApiRequestError
+from app.exceptions.ingestion import TopicsNotAllowedForCategoryError
 from app.exceptions.llm import LlmApiRequestError
 from app.models.schemas import DocumentDeletedResponse, SectionUpdateRequest, SectionUpdateResponse
 
@@ -82,7 +83,7 @@ async def update_section(
     )
     try:
         result = await service.ingest_section(document_id, section_number, data)
-    except ValueError as error:
+    except (ValueError, TopicsNotAllowedForCategoryError) as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     except (LlmApiRequestError, EmbeddingApiRequestError) as error:
         logger.exception('❌ Ошибка обновления секции %s/%s. Детали: %s', document_id, section_number, error)

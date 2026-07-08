@@ -4,7 +4,7 @@ from httpx import AsyncClient
 
 from app.dependencies.services import get_ingestion_service
 from app.exceptions.embedding import EmbeddingApiRequestError
-from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError
+from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError
 from app.exceptions.llm import LlmApiRequestError
 from app.main import app
 from app.models.schemas import MAX_RAW_TEXT_LENGTH, IngestResponse
@@ -16,7 +16,7 @@ VALID_PAYLOAD = {
     'raw_text': 'Текст статьи 21 ФЗ-181.',
     'source_title': 'ФЗ-181, Статья 21',
     'audience': 'both',
-    'topic': 'quota',
+    'topics': [],
     'version': '2026-01-01',
     'effective_date': '2026-01-01',
 }
@@ -73,6 +73,18 @@ async def test_ingest_document_returns_422_when_raw_text_too_large_raised_by_ser
     app.dependency_overrides[get_ingestion_service] = lambda: fake_service
 
     response = await async_client.post('/api/v1/ingest', json=VALID_PAYLOAD)
+
+    assert response.status_code == 422
+
+
+async def test_ingest_document_returns_422_when_topics_not_allowed_for_category(async_client: AsyncClient):
+    fake_service = AsyncMock(spec=IngestionService)
+    fake_service.ingest_document.side_effect = TopicsNotAllowedForCategoryError(
+        document_id='fz-181-art21', category='federal_law', topics=['квотирование'],
+    )
+    app.dependency_overrides[get_ingestion_service] = lambda: fake_service
+
+    response = await async_client.post('/api/v1/ingest', json={**VALID_PAYLOAD, 'topics': ['квотирование']})
 
     assert response.status_code == 422
 

@@ -5,7 +5,7 @@ from app.core.rate_limit import limiter
 from app.dependencies.auth import VerifyApiKeyDep
 from app.dependencies.services import IngestionServiceDep
 from app.exceptions.embedding import EmbeddingApiRequestError
-from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError
+from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError
 from app.exceptions.llm import LlmApiRequestError
 from app.models.schemas import DocumentMetadataInput, IngestRequest, IngestResponse
 
@@ -54,7 +54,7 @@ async def ingest_document(request: Request, data: IngestRequest, service: Ingest
         document_metadata = DocumentMetadataInput(
             source_title=data.source_title,
             audience=data.audience,
-            topic=data.topic,
+            topics=data.topics,
             version=data.version,
             effective_date=data.effective_date,
         )
@@ -66,7 +66,7 @@ async def ingest_document(request: Request, data: IngestRequest, service: Ingest
         )
         logger.info('✅ Запрос POST /ingest выполнен. document_id=%s.', data.document_id)
         return result
-    except (RawTextTooLargeError, TooManyChunksError) as error:
+    except (RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError) as error:
         logger.warning('⚠️ Документ %s отклонён: %s', data.document_id, error)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     except (LlmApiRequestError, EmbeddingApiRequestError) as error:

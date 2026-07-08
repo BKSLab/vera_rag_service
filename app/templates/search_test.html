@@ -79,7 +79,7 @@
             <td>{{ chunk.source_title }}</td>
             <td>{{ chunk.category }}</td>
             <td>{{ chunk.audience }}</td>
-            <td>{{ chunk.topic }}</td>
+            <td>{{ chunk.topics | join(', ') }}</td>
             <td>{{ '%.4f' | format(chunk.score) }}</td>
             <td style="max-width:400px;white-space:pre-wrap;">{{ chunk.text }}</td>
           </tr>

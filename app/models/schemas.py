@@ -122,7 +122,11 @@ class DocumentMetadataInput(BaseModel):
 
     source_title: str = Field(..., description='Человекочитаемое название источника.')
     audience: Audience = Field(..., description='Целевая аудитория.')
-    topic: str = Field(..., description='Тема документа.')
+    topics: list[str] = Field(
+        default_factory=list,
+        description='Темы документа (раздел 3 плана) — допустимы только для other_npa/case_law/authorial, '
+        'для labor_code/federal_law список должен быть пустым.',
+    )
     version: str = Field(..., description='Дата редакции документа.')
     effective_date: date = Field(..., description='Дата вступления редакции в силу.')
 
@@ -148,7 +152,7 @@ class SearchResultChunk(BaseModel):
     synthetic_title: str = Field(..., description='Синтетический заголовок чанка.')
     source_title: str = Field(..., description='Человекочитаемое название источника.')
     audience: Audience = Field(..., description='Целевая аудитория чанка.')
-    topic: str = Field(..., description='Тема чанка.')
+    topics: list[str] = Field(default_factory=list, description='Темы чанка (раздел 3 плана) — пусто для labor_code/federal_law.')
     category: Category = Field(
         ..., description='Категория источника (Этап 5.1 плана) — нужна потребителю, чтобы '
         'выстроить финальный ответ в порядке "база → судебная практика → иные акты → комментарий".'
@@ -245,7 +249,10 @@ class IngestRequest(BaseModel):
     )
     source_title: str = Field(..., description='Человекочитаемое название источника.')
     audience: Audience = Field(..., description='Целевая аудитория.')
-    topic: str = Field(..., description='Тема документа.')
+    topics: list[str] = Field(
+        default_factory=list,
+        description='Темы документа (раздел 3 плана) — допустимы только для other_npa/case_law/authorial.',
+    )
     version: str = Field(..., description='Дата редакции документа.')
     effective_date: date = Field(..., description='Дата вступления редакции в силу.')
 
@@ -278,6 +285,13 @@ class DocumentDeletedResponse(BaseModel):
 # (Этап 13 плана). case_law и authorial обновляются только целым документом.
 SECTION_UPDATE_ALLOWED_CATEGORIES: frozenset[str] = frozenset({'labor_code', 'federal_law', 'other_npa'})
 
+# Категории, для которых осмысленны темы (раздел 3 плана, обсуждение с
+# пользователем 2026-07-08) — узкие по предмету источники, документ обычно
+# посвящён одному-двум конкретным вопросам. labor_code/federal_law — широкие
+# кодексы/законы, регулирующие десятки разных тем одновременно: свести это
+# к одной-двум темам на документ означало бы соврать или обесценить фильтр.
+TOPICS_ALLOWED_CATEGORIES: frozenset[str] = frozenset({'other_npa', 'case_law', 'authorial'})
+
 
 class SectionUpdateRequest(BaseModel):
     """Тело запроса `PUT /document/{id}/sections/{section_number}`.
@@ -300,7 +314,10 @@ class SectionUpdateRequest(BaseModel):
     effective_date: date = Field(..., description='Дата вступления этой редакции в силу.')
     source_title: str = Field(..., description='Человекочитаемое название документа (например, "ТК РФ").')
     audience: Audience = Field(..., description='Целевая аудитория.')
-    topic: str = Field(..., description='Тема.')
+    topics: list[str] = Field(
+        default_factory=list,
+        description='Темы (раздел 3 плана) — допустимы только для other_npa (case_law/authorial не поддерживают гранулярное обновление).',
+    )
 
 
 class SectionUpdateResponse(BaseModel):

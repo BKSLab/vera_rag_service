@@ -45,7 +45,7 @@ async def large_corpus_store():
     await store.ensure_collection()
 
     metadata = DocumentMetadataInput(
-        source_title='ТК РФ', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='ТК РФ', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
     batch: list[EmbeddedChunk] = []
     for index in range(CORPUS_SIZE):

@@ -62,7 +62,7 @@ def make_document_metadata() -> DocumentMetadataInput:
     return DocumentMetadataInput(
         source_title='ФЗ-181, Статья 21',
         audience='both',
-        topic='quota',
+        topics=['quota'],
         version='2026-01-01',
         effective_date=date(2026, 1, 1),
     )
@@ -147,7 +147,7 @@ async def test_upsert_chunk_makes_point_retrievable_with_metadata_payload(vector
     point = points[0]
     assert point.payload['document_id'] == 'fz-181'
     assert point.payload['audience'] == 'both'
-    assert point.payload['topic'] == 'quota'
+    assert point.payload['topics'] == ['quota']
     assert CHUNK_VECTOR_NAME in point.vector
     assert QUESTION_VECTOR_NAMES[0] in point.vector
     assert QUESTION_VECTOR_NAMES[2] in point.vector
@@ -184,10 +184,10 @@ async def test_delete_document_filters_by_version_when_given(vector_store):
     chunk_v1 = make_embedded_chunk(document_id='fz-181', chunk_index=0)
     chunk_v2 = make_embedded_chunk(document_id='fz-181', chunk_index=1)
     metadata_v1 = DocumentMetadataInput(
-        source_title='ФЗ-181', audience='both', topic='quota', version='2025-01-01', effective_date=date(2025, 1, 1)
+        source_title='ФЗ-181', audience='both', topics=['quota'], version='2025-01-01', effective_date=date(2025, 1, 1)
     )
     metadata_v2 = DocumentMetadataInput(
-        source_title='ФЗ-181', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='ФЗ-181', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
 
     await vector_store.upsert_chunk(chunk_v1, metadata_v1)
@@ -228,10 +228,10 @@ async def test_list_chunks_filters_by_version_when_given(vector_store):
     chunk_v1 = make_embedded_chunk(document_id='fz-181', chunk_index=0)
     chunk_v2 = make_embedded_chunk(document_id='fz-181', chunk_index=0)
     metadata_v1 = DocumentMetadataInput(
-        source_title='ФЗ-181', audience='both', topic='quota', version='2025-01-01', effective_date=date(2025, 1, 1)
+        source_title='ФЗ-181', audience='both', topics=['quota'], version='2025-01-01', effective_date=date(2025, 1, 1)
     )
     metadata_v2 = DocumentMetadataInput(
-        source_title='ФЗ-181', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='ФЗ-181', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
     await vector_store.upsert_chunk(chunk_v1, metadata_v1)
     await vector_store.upsert_chunk(chunk_v2, metadata_v2)
@@ -247,10 +247,10 @@ async def test_count_actual_document_chunks_ignores_inactive_chunks(vector_store
     chunk_v1 = make_embedded_chunk(document_id='fz-181', chunk_index=0)
     chunk_v2 = make_embedded_chunk(document_id='fz-181', chunk_index=1)
     metadata_v1 = DocumentMetadataInput(
-        source_title='ФЗ-181', audience='both', topic='quota', version='2025-01-01', effective_date=date(2025, 1, 1)
+        source_title='ФЗ-181', audience='both', topics=['quota'], version='2025-01-01', effective_date=date(2025, 1, 1)
     )
     metadata_v2 = DocumentMetadataInput(
-        source_title='ФЗ-181', audience='both', topic='quota', version='2026-01-01', effective_date=date(2026, 1, 1)
+        source_title='ФЗ-181', audience='both', topics=['quota'], version='2026-01-01', effective_date=date(2026, 1, 1)
     )
     await vector_store.upsert_chunk(chunk_v1, metadata_v1)
     await vector_store.upsert_chunk(chunk_v2, metadata_v2)

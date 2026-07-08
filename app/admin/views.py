@@ -14,10 +14,11 @@ from app.admin.services import build_documents_service, build_ingestion_service,
 from app.core.config_logger import logger
 from app.db.models.document import Document
 from app.db.models.search_log import SearchLog
+from app.db.models.topic import Topic
 from app.db.session import async_session_factory
 from app.dependencies.vectorstore import get_vector_store
 from app.exceptions.embedding import EmbeddingApiRequestError
-from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError
+from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError
 from app.exceptions.llm import LlmApiRequestError
 from app.ingestion.extract import (
     MAX_UPLOAD_SIZE_BYTES,
@@ -26,7 +27,7 @@ from app.ingestion.extract import (
     extract_text_from_upload,
 )
 from app.models.metadata import CATEGORY_LABELS, Audience, Category
-from app.models.schemas import DocumentMetadataInput, SearchFilters
+from app.models.schemas import TOPICS_ALLOWED_CATEGORIES, DocumentMetadataInput, SearchFilters
 
 SEARCH_TEST_TOP_K = 5
 
@@ -120,7 +121,7 @@ class DocumentAdmin(ModelView, model=Document):
 
     column_list = [
         Document.id, Document.document_id, Document.version, Document.category,
-        Document.source_title, Document.audience, Document.topic,
+        Document.source_title, Document.audience, Document.topics,
         Document.effective_date, Document.is_active, Document.created_at,
     ]
     column_searchable_list = [Document.document_id, Document.source_title]
@@ -159,6 +160,27 @@ class DocumentAdmin(ModelView, model=Document):
         )
 
 
+class TopicAdmin(ModelView, model=Topic):
+    """Справочник тем документов (раздел 3 плана) — управляется полностью
+    через админку, без деплоя кода (в отличие от `Category`/`Audience`,
+    захардкоженных в `app/models/metadata.py`). Осмысленны только для
+    `other_npa`/`case_law`/`authorial` — см. `TOPICS_ALLOWED_CATEGORIES`,
+    `TopicsNotAllowedForCategoryError`."""
+
+    name = 'Тема'
+    name_plural = 'Темы документов'
+    icon = 'fa-solid fa-tags'
+
+    column_list = [Topic.id, Topic.name, Topic.comment, Topic.created_at]
+    column_searchable_list = [Topic.name]
+    column_sortable_list = [Topic.name, Topic.created_at]
+    form_columns = [Topic.name, Topic.comment]
+
+    can_create = True
+    can_edit = True
+    can_delete = True
+
+
 class DocumentUploadView(BaseView):
     """Загрузка документа в БЗ через /admin (Этап 11.1 плана) — закрывает
     разрыв: Expert/контент-менеджер не должен вручную собирать JSON с
@@ -169,9 +191,15 @@ class DocumentUploadView(BaseView):
 
     @expose('/document-upload', methods=['GET', 'POST'])
     async def document_upload(self, request: Request) -> Any:
+        async with async_session_factory() as db_session:
+            result = await db_session.execute(select(Topic.name).order_by(Topic.name))
+            topic_names = [row[0] for row in result.all()]
+
         context: dict[str, Any] = {
             'categories': get_args(Category), 'audiences': get_args(Audience),
             'category_labels': CATEGORY_LABELS,
+            'topic_names': topic_names,
+            'topics_allowed_categories': sorted(TOPICS_ALLOWED_CATEGORIES),
             'csrf_token': get_or_create_csrf_token(request),
         }
 
@@ -203,7 +231,7 @@ class DocumentUploadView(BaseView):
             document_metadata = DocumentMetadataInput(
                 source_title=form.get('source_title', ''),
                 audience=form.get('audience'),
-                topic=form.get('topic', ''),
+                topics=form.getlist('topics'),
                 version=form.get('version', ''),
                 effective_date=form.get('effective_date'),
             )
@@ -219,7 +247,10 @@ class DocumentUploadView(BaseView):
                 f"Документ «{result.document_id}» (версия {result.version}) проиндексирован: "
                 f'{result.chunks_count} чанков. Замещено версий: {len(result.replaced_versions)}.'
             )
-        except (ValueError, UnsupportedFileTypeError, ValidationError, RawTextTooLargeError, TooManyChunksError) as error:
+        except (
+            ValueError, UnsupportedFileTypeError, ValidationError,
+            RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError,
+        ) as error:
             context['error'] = str(error)
         except (LlmApiRequestError, EmbeddingApiRequestError) as error:
             context['error'] = str(error)

@@ -3,6 +3,7 @@ from datetime import date
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
 import pytest_asyncio
 from qdrant_client import AsyncQdrantClient
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.core.settings import get_settings
 from app.db.models.document import Document
+from app.exceptions.ingestion import TopicsNotAllowedForCategoryError
 from app.models.schemas import ChunkEnrichmentResult, DocumentMetadataInput, SectionUpdateRequest
 from app.repositories.document import DocumentRepository
 from app.services.ingestion import IngestionService
@@ -54,10 +56,13 @@ def make_ingestion_service(vector_store: QdrantVectorStore, db_session) -> Inges
 
 
 def make_document_metadata(version: str = '2026-01-01') -> DocumentMetadataInput:
+    # Пустые topics — тесты в этом файле используются с labor_code/federal_law
+    # (идемпотентность/гонки ingestion, не про темы), а темы допустимы только
+    # для other_npa/case_law/authorial (TopicsNotAllowedForCategoryError).
     return DocumentMetadataInput(
         source_title='ФЗ-181, Статья 21',
         audience='both',
-        topic='quota',
+        topics=[],
         version=version,
         effective_date=date(2026, 1, 1),
     )
@@ -76,7 +81,7 @@ def make_section_update_request(raw_text: str, version: str) -> SectionUpdateReq
         effective_date=date.fromisoformat(version),
         source_title='Трудовой кодекс Российской Федерации',
         audience='both',
-        topic='leave',
+        topics=[],
     )
 
 
@@ -102,6 +107,62 @@ async def test_ingest_document_does_not_duplicate_chunks_on_repeated_call_with_s
 
     assert len(second_chunks) == len(first_chunks)
     assert {chunk['chunk_id'] for chunk in second_chunks} == {chunk['chunk_id'] for chunk in first_chunks}
+
+
+async def test_ingest_document_raises_when_topics_set_for_disallowed_category(vector_store, db_session):
+    """Темы осмысленны только для other_npa/case_law/authorial (раздел 3
+    плана, обсуждение с пользователем 2026-07-08) — labor_code/federal_law
+    регулируют десятки тем одновременно, свести это к одной-двум означало
+    бы соврать или обесценить фильтр."""
+    service = make_ingestion_service(vector_store, db_session)
+    document_metadata = DocumentMetadataInput(
+        source_title='Источник', audience='both', topics=['квотирование'],
+        version='2026-01-01', effective_date=date(2026, 1, 1),
+    )
+
+    with pytest.raises(TopicsNotAllowedForCategoryError):
+        await service.ingest_document(
+            document_id=f'doc-{uuid4().hex}', raw_text='Текст документа.', category='federal_law',
+            document_metadata=document_metadata,
+        )
+
+
+async def test_ingest_document_allows_topics_for_other_npa(vector_store, db_session):
+    service = make_ingestion_service(vector_store, db_session)
+    document_id = f'doc-{uuid4().hex}'
+    document_metadata = DocumentMetadataInput(
+        source_title='Источник', audience='both', topics=['квотирование', 'трудоустройство'],
+        version='2026-01-01', effective_date=date(2026, 1, 1),
+    )
+
+    await service.ingest_document(
+        document_id=document_id, raw_text='Текст постановления.', category='other_npa',
+        document_metadata=document_metadata,
+    )
+
+    chunks = await vector_store.list_chunks(document_id)
+    assert chunks
+    assert chunks[0]['topics'] == ['квотирование', 'трудоустройство']
+
+
+async def test_ingest_section_raises_when_topics_set_for_disallowed_category(vector_store, db_session):
+    """Гранулярное обновление секции подчиняется тому же правилу — темы
+    допустимы только для other_npa из SECTION_UPDATE_ALLOWED_CATEGORIES
+    (labor_code/federal_law поддерживают гранулярное обновление, но не темы)."""
+    service = make_ingestion_service(vector_store, db_session)
+    request = SectionUpdateRequest(
+        category='labor_code',
+        raw_text=make_words(20, 'слово'),
+        section_title='Статья 128. Отпуск без сохранения заработной платы',
+        version='2026-01-01',
+        effective_date=date(2026, 1, 1),
+        source_title='ТК РФ',
+        audience='both',
+        topics=['увольнение'],
+    )
+
+    with pytest.raises(TopicsNotAllowedForCategoryError):
+        await service.ingest_section(f'doc-{uuid4().hex}', '128', request)
 
 
 async def test_ingest_document_concurrent_calls_same_document_same_version_do_not_duplicate(vector_store, engine):

@@ -12,6 +12,7 @@ from app.admin.views import (
     DocumentUploadView,
     SearchLogAdmin,
     SearchTestView,
+    TopicAdmin,
 )
 from app.core.settings import get_settings
 
@@ -39,6 +40,7 @@ def create_admin(app: FastAPI, engine: AsyncEngine) -> Admin:
     admin.add_view(DashboardView)
     admin.add_view(SearchLogAdmin)
     admin.add_view(DocumentAdmin)
+    admin.add_view(TopicAdmin)
     # `add_view` (не `add_base_view` напрямую!) — только она проставляет
     # `_admin_ref` на класс view'а, без которого `login_required` (sqladmin)
     # тихо пропускает проверку авторизации для @expose-маршрутов BaseView.

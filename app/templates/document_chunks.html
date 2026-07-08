@@ -49,7 +49,7 @@
           <span class="badge bg-success">актуален</span>
           {% endif %}
           <span>{{ chunk.synthetic_title }}</span>
-          <span class="text-muted ms-auto"> {{ chunk.category }} · {{ chunk.audience }} · {{ chunk.topic }} · v{{ chunk.version }}</span>
+          <span class="text-muted ms-auto"> {{ chunk.category }} · {{ chunk.audience }} · {{ chunk.topics | join(', ') }} · v{{ chunk.version }}</span>
         </div>
         <div class="card-body">
           {% if chunk.section_number %}
