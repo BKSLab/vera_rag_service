@@ -84,9 +84,12 @@ class YandexSettings(SettingsBase):
     yandex_llm_api_url: str = 'https://ai.api.cloud.yandex.net/v1/chat/completions'
     yandex_embedding_api_url: str = 'https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
 
-    # Замерено реальным вызовом API на Этапе 4 (2026-06-19): и v2-модели,
-    # и легаси text-search-doc отдают 256 — расходится с предположением
-    # "максимум 768" из раздела 0.1 плана (см. примечание там же).
+    # v2-модели поддерживают 128/256(default)/512/768 через параметр `dim`
+    # в запросе к Text Embedding API. Раньше клиент ошибочно слал это поле
+    # как `vectorDimension` (несуществующее имя, молча игнорировалось API,
+    # реально всегда возвращались дефолтные 256 независимо от значения
+    # здесь) — обнаружено и исправлено 2026-07-08 (`app/clients/embeddings.py`),
+    # подтверждено прямыми вызовами API на всех четырёх значениях.
     yandex_embedding_dim: int = 768
 
     @property

@@ -78,7 +78,7 @@ class EmbeddingClient:
         """
         payload: dict = {'modelUri': model_uri, 'text': text}
         if self.vector_dimension is not None:
-            payload['vectorDimension'] = self.vector_dimension
+            payload['dim'] = self.vector_dimension
         data_json = json.dumps(payload, ensure_ascii=False)
         try:
             response = await self.httpx_client.post(

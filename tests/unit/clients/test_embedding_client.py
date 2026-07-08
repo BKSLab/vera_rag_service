@@ -79,7 +79,7 @@ async def test_get_embedding_sends_vector_dimension_when_set():
 
     await client.get_embedding(text='текст', model_uri='emb://folder/model/latest')
 
-    assert received[0].get('vectorDimension') == 768
+    assert received[0].get('dim') == 768
 
 
 async def test_get_embedding_omits_vector_dimension_when_none():
@@ -95,4 +95,4 @@ async def test_get_embedding_omits_vector_dimension_when_none():
 
     await client.get_embedding(text='текст', model_uri='emb://folder/model/latest')
 
-    assert 'vectorDimension' not in received[0]
+    assert 'dim' not in received[0]
