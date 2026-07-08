@@ -31,6 +31,26 @@ def test_clean_text_collapses_multiple_blank_lines():
     assert result == 'Первый абзац.\n\nВторой абзац.'
 
 
+def test_clean_text_removes_part_section_chapter_headings():
+    raw_text = (
+        'ЧАСТЬ ПЕРВАЯ\n'
+        '\n'
+        'Раздел VI. Оплата и нормирование труда\n'
+        '\n'
+        'Глава 20. Общие положения\n'
+        '\n'
+        'Статья 129. Основные понятия\n'
+        'Текст статьи 129.'
+    )
+
+    result = clean_text(raw_text)
+
+    assert 'ЧАСТЬ' not in result
+    assert 'Раздел VI' not in result
+    assert 'Глава 20' not in result
+    assert 'Статья 129. Основные понятия' in result
+
+
 def test_extract_law_sections_splits_by_article_with_number_and_title():
     text = (
         'Статья 20. Право на труд\n'
@@ -57,6 +77,52 @@ def test_extract_law_sections_discards_preamble_before_first_article():
 
     assert len(sections) == 1
     assert 'Преамбула' not in sections[0].text
+
+
+def test_extract_law_sections_does_not_leak_chapter_heading_into_previous_article():
+    text = clean_text(
+        'Статья 128. Заголовок статьи 128\n'
+        '\n'
+        'Текст статьи 128.\n'
+        '\n'
+        'Раздел VI. Оплата и нормирование труда\n'
+        '\n'
+        'Глава 20. Общие положения\n'
+        '\n'
+        'Статья 129. Заголовок статьи 129\n'
+        '\n'
+        'Текст статьи 129.'
+    )
+
+    sections = extract_law_sections(document_id='tk-rf', text=text, category='labor_code')
+
+    assert len(sections) == 2
+    assert sections[0].text == 'Текст статьи 128.'
+    assert 'Раздел' not in sections[0].text
+    assert 'Глава' not in sections[0].text
+    assert sections[1].text == 'Текст статьи 129.'
+
+
+def test_extract_law_sections_merges_duplicate_article_number_instead_of_phantom_section():
+    text = (
+        'Статья 115. Нормальная продолжительность рабочего времени\n'
+        '\n'
+        'Текст статьи 115.\n'
+        '\n'
+        'Статья 115 изменена с 1 сентября 2024 г. — Федеральный закон от 01.01.2024 № 1-ФЗ\n'
+        '\n'
+        'Статья 116. Ежегодные дополнительные оплачиваемые отпуска\n'
+        '\n'
+        'Текст статьи 116.'
+    )
+
+    sections = extract_law_sections(document_id='tk-rf', text=text, category='labor_code')
+
+    assert len(sections) == 2
+    assert sections[0].section_number == '115'
+    assert sections[0].text == 'Текст статьи 115.'
+    assert sections[1].section_number == '116'
+    assert sections[1].text == 'Текст статьи 116.'
 
 
 def test_extract_article_sections_splits_by_markdown_headings():

@@ -35,13 +35,28 @@ PAGE_FOOTER_PATTERN = re.compile(r'^\s*-?\s*\d+\s*-?\s*$', re.MULTILINE)
 MULTIPLE_BLANK_LINES_PATTERN = re.compile(r'\n{3,}')
 SOFT_HYPHEN_LINEBREAK_PATTERN = re.compile(r'-\n(?=\w)')
 
+# Заголовки частей/разделов/глав нормативного акта ("ЧАСТЬ ПЕРВАЯ",
+# "Раздел VI. Оплата и нормирование труда", "Глава 20. Общие положения") —
+# чисто навигационная разметка, не текст конкретной статьи и не отслеживается
+# в метаданных `Section` (там только section_number/section_title статьи).
+# Без вырезания эти строки попадают в текст последней статьи ПЕРЕД границей
+# (extract_law_sections режет по позиции "Статья N", а не по этим
+# заголовкам) — обнаружено на реальном ТК РФ (граница статей 128/129: хвост
+# "Раздел VI... Глава 20..." утёк в статью 128). Вырезаем на уровне
+# clean_text, до разбиения на секции — тогда утечка невозможна ни на одной
+# границе, а не только там, где её заметили вручную.
+PART_HEADING_PATTERN = re.compile(r'^ЧАСТЬ\s+\S+\s*$', re.MULTILINE)
+SECTION_HEADING_PATTERN = re.compile(r'^Раздел\s+[IVXLCDM]+\.\s*.*$', re.MULTILINE)
+CHAPTER_HEADING_PATTERN = re.compile(r'^Глава\s+\d+\.\s*.*$', re.MULTILINE)
+
 
 def clean_text(raw_text: str) -> str:
     """Очищает текст документа от артефактов форматирования перед извлечением структуры.
 
     Убирает переносы строк по дефису внутри слова (артефакт PDF-вёрстки),
-    одиночные строки-колонтитулы с номером страницы и схлопывает более
-    двух подряд идущих пустых строк до одной.
+    одиночные строки-колонтитулы с номером страницы, заголовки
+    частей/разделов/глав нормативного акта и схлопывает более двух подряд
+    идущих пустых строк до одной.
 
     Args:
         raw_text: Исходный текст документа.
@@ -52,6 +67,9 @@ def clean_text(raw_text: str) -> str:
     text = raw_text.replace('\r\n', '\n').replace('\r', '\n')
     text = SOFT_HYPHEN_LINEBREAK_PATTERN.sub('', text)
     text = PAGE_FOOTER_PATTERN.sub('', text)
+    text = PART_HEADING_PATTERN.sub('', text)
+    text = SECTION_HEADING_PATTERN.sub('', text)
+    text = CHAPTER_HEADING_PATTERN.sub('', text)
     text = MULTIPLE_BLANK_LINES_PATTERN.sub('\n\n', text)
     return text.strip()
 
@@ -71,6 +89,11 @@ def extract_law_sections(document_id: str, text: str, category: Category) -> lis
         Если в тексте не найдено ни одной "Статья N" (например, судебный акт,
         размеченный пунктами, а не статьями) — весь текст становится одной
         секцией, а не отбрасывается молча.
+        Повторное совпадение уже встреченного номера статьи не создаёт вторую
+        секцию — это не новая статья, а артефакт вроде строки-аннотации
+        "Статья N изменена с ... — Федеральный закон ...", которую
+        `LAW_ARTICLE_PATTERN` тоже матчит; такой текст присоединяется к уже
+        найденной секции этого номера.
     """
     matches = list(LAW_ARTICLE_PATTERN.finditer(text))
 
@@ -86,22 +109,35 @@ def extract_law_sections(document_id: str, text: str, category: Category) -> lis
             )
         ]
 
-    sections: list[Section] = []
+    titles_by_number: dict[str, str] = {}
+    text_parts_by_number: dict[str, list[str]] = {}
+    order: list[str] = []
 
     for section_index, match in enumerate(matches):
         start = match.end()
         end = matches[section_index + 1].start() if section_index + 1 < len(matches) else len(text)
         section_text = text[start:end].strip()
+        number = match.group('number')
         title = match.group('title').strip()
 
+        if number not in text_parts_by_number:
+            titles_by_number[number] = title
+            text_parts_by_number[number] = []
+            order.append(number)
+        if section_text:
+            text_parts_by_number[number].append(section_text)
+
+    sections: list[Section] = []
+    for section_index, number in enumerate(order):
+        title = titles_by_number[number]
         sections.append(
             Section(
                 document_id=document_id,
                 category=category,
                 section_index=section_index,
-                section_number=match.group('number'),
-                section_title=f"Статья {match.group('number')}" + (f'. {title}' if title else ''),
-                text=section_text,
+                section_number=number,
+                section_title=f'Статья {number}' + (f'. {title}' if title else ''),
+                text='\n'.join(text_parts_by_number[number]),
             )
         )
 
