@@ -4,6 +4,14 @@ volumes:
   pg_vera_rag_data:
   qdrant_data:
 
+networks:
+  # Общая сеть для сквозной интеграции трёх сервисов (MCP_SERVICE_PLAN.md
+  # в vera_mcp_service, Этап 8). Создаётся один раз вручную:
+  # `docker network create vera_network` — не управляется этим (или любым
+  # другим) отдельным docker-compose.yml.
+  vera_network:
+    external: true
+
 services:
   db:
     container_name: vera_rag_db
@@ -40,6 +48,15 @@ services:
     container_name: vera_rag_service
     build: .
     env_file: .env
+    # .env содержит POSTGRES_HOST=localhost/QDRANT_URL=http://localhost:6333 —
+    # верно для локальной разработки на хосте (подключение к портам,
+    # опубликованным наружу), но не для этого контейнера: внутри docker-сети
+    # "localhost" означает сам контейнер rag_service, а не соседние db/qdrant.
+    # Найдено эмпирически при верификации Этапа 8 vera_mcp_service (тот же
+    # класс проблемы, что и RABBITMQ_HOST/REDIS_HOST в vera_agent_service).
+    environment:
+      POSTGRES_HOST: db
+      QDRANT_URL: http://qdrant:6333
     restart: on-failure
     command: bash entrypoint.sh
     ports:
@@ -51,3 +68,8 @@ services:
     depends_on:
       - db
       - qdrant
+    networks:
+      # `default` — для db/qdrant в этом же compose-проекте, `vera_network` —
+      # для видимости из vera_mcp_service (MCP_SERVICE_PLAN.md, Этап 8).
+      - default
+      - vera_network

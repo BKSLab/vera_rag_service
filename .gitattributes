@@ -1,0 +1,5 @@
+# entrypoint.sh запускается bash'ом внутри Linux-контейнера — CRLF (которые
+# принудительно добавляет git на Windows при core.autocrlf=true) ломают
+# скрипт ("$'\r': command not found"). Найдено эмпирически при верификации
+# сетевой интеграции (MCP_SERVICE_PLAN.md в vera_mcp_service, Этап 8).
+*.sh text eol=lf
