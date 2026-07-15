@@ -13,7 +13,7 @@ services:
     volumes:
       - pg_vera_rag_data:/var/lib/postgresql/data
     ports:
-      - "5435:5432"
+      - "5437:5432"
 
   qdrant:
     container_name: vera_rag_qdrant
