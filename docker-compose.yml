@@ -18,6 +18,8 @@ services:
   qdrant:
     container_name: vera_rag_qdrant
     image: qdrant/qdrant:v1.12.4
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
     restart: always
     volumes:
       - qdrant_data:/qdrant/storage
@@ -27,32 +29,19 @@ services:
     deploy:
       resources:
         limits:
-          # QD-2 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — раньше у
-          # Qdrant не было лимита памяти вообще (лимит 2GB ниже относится
-          # только к rag_service) — без него контролируемый OOM в
-          # контейнере при превышении заменялся бы риском для всего хоста.
-          # 4GB — с запасом по математике плана для масштаба ~100К чанков
-          # (раздел "Найденные проблемы", QD-2/QD-4); пересмотреть при
-          # росте корпуса на порядок.
           memory: 4GB
 
   rag_service:
     container_name: vera_rag_service
     build: .
     env_file: .env
-    # .env содержит POSTGRES_HOST=localhost/QDRANT_URL=http://localhost:6333 —
-    # верно для локальной разработки на хосте (подключение к портам,
-    # опубликованным наружу), но не для этого контейнера: внутри docker-сети
-    # "localhost" означает сам контейнер rag_service, а не соседние db/qdrant.
-    # Найдено эмпирически при верификации Этапа 8 vera_mcp_service (тот же
-    # класс проблемы, что и RABBITMQ_HOST/REDIS_HOST в vera_agent_service).
     environment:
       POSTGRES_HOST: db
       QDRANT_URL: http://qdrant:6333
     restart: on-failure
     command: bash entrypoint.sh
     ports:
-      - "8000:8000"
+      - "8002:8000"
     deploy:
       resources:
         limits:
