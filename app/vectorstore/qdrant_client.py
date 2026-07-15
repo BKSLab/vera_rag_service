@@ -1,6 +1,7 @@
 from datetime import date
 
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.core.config_logger import logger
 from app.exceptions.vectorstore import QdrantCollectionSchemaError
@@ -150,13 +151,19 @@ class QdrantVectorStore:
         # ранжирование на стороне Qdrant (SEARCH-1/QD-3) вместо клиентского
         # `rank_bm25` поверх полного scroll коллекции на каждый запрос.
         sparse_vectors_config = {SPARSE_VECTOR_NAME: models.SparseVectorParams(modifier=models.Modifier.IDF)}
-        await self.client.create_collection(
-            collection_name=self.collection_name,
-            vectors_config=vectors_config,
-            sparse_vectors_config=sparse_vectors_config,
-        )
+        try:
+            await self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=vectors_config,
+                sparse_vectors_config=sparse_vectors_config,
+            )
+        except UnexpectedResponse as error:
+            if error.status_code != 409:
+                raise
+            logger.info('Коллекция Qdrant %s уже создана другим worker-процессом.', self.collection_name)
+            await self._validate_existing_collection()
         await self._ensure_payload_indexes()
-        logger.info('✅ Коллекция Qdrant создана: %s', self.collection_name)
+        logger.info('✅ Коллекция Qdrant готова: %s', self.collection_name)
 
     async def _validate_existing_collection(self) -> None:
         """Fail-fast проверка схемы существующей коллекции.
