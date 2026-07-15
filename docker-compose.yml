@@ -4,14 +4,6 @@ volumes:
   pg_vera_rag_data:
   qdrant_data:
 
-networks:
-  # Общая сеть для сквозной интеграции трёх сервисов (MCP_SERVICE_PLAN.md
-  # в vera_mcp_service, Этап 8). Создаётся один раз вручную:
-  # `docker network create vera_network` — не управляется этим (или любым
-  # другим) отдельным docker-compose.yml.
-  vera_network:
-    external: true
-
 services:
   db:
     container_name: vera_rag_db
@@ -68,8 +60,3 @@ services:
     depends_on:
       - db
       - qdrant
-    networks:
-      # `default` — для db/qdrant в этом же compose-проекте, `vera_network` —
-      # для видимости из vera_mcp_service (MCP_SERVICE_PLAN.md, Этап 8).
-      - default
-      - vera_network
