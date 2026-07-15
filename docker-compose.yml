@@ -10,6 +10,11 @@ services:
     image: postgres:16-alpine3.19
     env_file: .env
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     volumes:
       - pg_vera_rag_data:/var/lib/postgresql/data
     ports:
@@ -47,5 +52,7 @@ services:
         limits:
           memory: 2GB
     depends_on:
-      - db
-      - qdrant
+      db:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
