@@ -164,6 +164,14 @@ class PolzaSettings(SettingsBase):
     polza_llm_api_url: str = 'https://polza.ai/api/v1/chat/completions'
 
 
+class ObservabilitySettings(SettingsBase):
+    """Минимальный distributed trace поиска без экспорта query/chunk content."""
+
+    phoenix_enabled: bool = True
+    phoenix_otlp_endpoint: str = 'http://localhost:6006/v1/traces'
+    phoenix_project_name: str = 'vera-local'
+
+
 class Settings(BaseSettings):
     """Агрегатор всех доменных настроек проекта."""
 
@@ -173,6 +181,7 @@ class Settings(BaseSettings):
     yandex: YandexSettings = Field(default_factory=YandexSettings)
     polza: PolzaSettings = Field(default_factory=PolzaSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
 
 @lru_cache

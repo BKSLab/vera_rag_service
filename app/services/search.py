@@ -3,6 +3,8 @@ import time
 from dataclasses import dataclass
 from uuid import uuid4
 
+from opentelemetry.trace import Span, Status, StatusCode
+
 from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.core.config_logger import logger
@@ -11,6 +13,7 @@ from app.core.settings import get_settings
 from app.db.models.search_log import SearchLog
 from app.exceptions.search_log import SearchLogRepositoryError
 from app.models.schemas import SearchFilters, SearchResultChunk
+from app.observability.tracing import get_tracer
 from app.repositories.search_log import SearchLogRepository
 from app.search.fusion import rrf_fusion
 from app.search.hybrid import HybridSearchResult, hybrid_search
@@ -21,6 +24,8 @@ from app.vectorstore.qdrant_client import (
     TEXT_PAYLOAD_FIELD,
     QdrantVectorStore,
 )
+
+tracer = get_tracer()
 
 
 def _build_reranker_candidate_text(payload: dict) -> str:
@@ -62,6 +67,24 @@ class SearchDiagnostics:
     query_variants: list[str]
     query_expansion_status: str
     reranker_status: str
+
+
+@dataclass
+class _SearchTraceData:
+    request_id: str
+    query_variant_count: int = 0
+    dense_candidate_count: int = 0
+    sparse_candidate_count: int = 0
+    rrf_candidate_count: int = 0
+    result_chunk_count: int = 0
+    query_expansion_status: str = 'not_started'
+    reranker_status: str = 'not_started'
+    search_log_status: str = 'not_attempted'
+    latency_query_expansion_ms: float = 0.0
+    latency_embed_query_ms: float = 0.0
+    latency_hybrid_search_ms: float = 0.0
+    latency_rerank_ms: float = 0.0
+    outcome: str = 'error'
 
 
 class SearchService:
@@ -110,17 +133,59 @@ class SearchService:
         поиска в админке, которая показывает dense/sparse/RRF/rerank, не
         только финальный список.
         """
-        # LOG-2 — request_id из контекста HTTP-запроса (middleware,
-        # app/main.py), не генерируется заново здесь — иначе строка лога
-        # на уровне эндпоинта и запись в search_logs для одного и того же
-        # запроса получали бы два разных идентификатора. Fallback на новый
-        # uuid4, если сервис вызван не через HTTP (юнит-тесты, скрипты).
         request_id = get_request_id() or str(uuid4())
+        trace_data = _SearchTraceData(request_id=request_id)
+        attributes = {
+            'openinference.span.kind': 'RETRIEVER',
+            'request.id': request_id,
+            'rag.query.length': len(query),
+            'rag.audience': _filter_value(filters.audience),
+            'rag.topic': _filter_value(filters.topic),
+            'rag.category': _filter_value(filters.category),
+            'rag.top_k': top_k,
+        }
+        with tracer.start_as_current_span('rag.search', attributes=attributes) as span:
+            try:
+                diagnostics = await self._search_with_diagnostics_body(
+                    query, filters, top_k, request_id, trace_data
+                )
+                trace_data.result_chunk_count = len(diagnostics.results)
+                has_fallback = (
+                    diagnostics.query_expansion_status.startswith('fallback_')
+                    or diagnostics.reranker_status.startswith('fallback_')
+                )
+                if has_fallback:
+                    trace_data.outcome = 'degraded'
+                elif not diagnostics.results:
+                    trace_data.outcome = 'empty'
+                else:
+                    trace_data.outcome = 'ok'
+                return diagnostics
+            except Exception as error:
+                trace_data.outcome = 'error'
+                span.record_exception(error)
+                span.set_status(Status(StatusCode.ERROR, str(error)))
+                raise
+            finally:
+                _finalize_search_span(span, trace_data)
+
+    async def _search_with_diagnostics_body(
+        self,
+        query: str,
+        filters: SearchFilters,
+        top_k: int,
+        request_id: str,
+        trace_data: _SearchTraceData,
+    ) -> SearchDiagnostics:
+        """Выполняет pipeline внутри уже активного `rag.search`."""
 
         started_at = time.perf_counter()
         query_expansion_outcome = await expand_query_with_status(self.query_expansion_llm_client, query)
         query_variants = query_expansion_outcome.queries
         latency_query_expansion_ms = (time.perf_counter() - started_at) * 1000
+        trace_data.query_expansion_status = query_expansion_outcome.status
+        trace_data.query_variant_count = len(query_variants)
+        trace_data.latency_query_expansion_ms = latency_query_expansion_ms
 
         # Каждый вариант запроса (исходный/декомпозированный подвопрос ×
         # переформулировка, раздел 8 плана) получает собственный
@@ -138,6 +203,7 @@ class SearchService:
             )
         )
         latency_embed_query_ms = (time.perf_counter() - started_at) * 1000
+        trace_data.latency_embed_query_ms = latency_embed_query_ms
 
         started_at = time.perf_counter()
         variant_hybrid_results = await asyncio.gather(
@@ -149,6 +215,7 @@ class SearchService:
             )
         )
         latency_hybrid_search_ms = (time.perf_counter() - started_at) * 1000
+        trace_data.latency_hybrid_search_ms = latency_hybrid_search_ms
 
         dense = [item for result in variant_hybrid_results for item in result.dense]
         sparse = [item for result in variant_hybrid_results for item in result.sparse]
@@ -157,9 +224,13 @@ class SearchService:
         # каждый вариант — ещё один ранжированный список chunk_id.
         fused = rrf_fusion([[chunk_id for chunk_id, _ in result.fused] for result in variant_hybrid_results])
         hybrid_result = HybridSearchResult(dense=dense, sparse=sparse, fused=fused)
+        trace_data.dense_candidate_count = len(dense)
+        trace_data.sparse_candidate_count = len(sparse)
+        trace_data.rrf_candidate_count = len(fused)
 
         if not hybrid_result.fused:
-            await self._save_search_log(
+            trace_data.reranker_status = 'no_candidates'
+            trace_data.search_log_status = await self._save_search_log(
                 request_id, query, query_variants, filters, hybrid_result, reranked_ids=[], results=[],
                 latency_query_expansion_ms=latency_query_expansion_ms,
                 latency_embed_query_ms=latency_embed_query_ms,
@@ -194,6 +265,8 @@ class SearchService:
         )
         reranked_ids = rerank_outcome.chunk_ids
         latency_rerank_ms = (time.perf_counter() - started_at) * 1000
+        trace_data.reranker_status = rerank_outcome.status
+        trace_data.latency_rerank_ms = latency_rerank_ms
 
         results = [
             SearchResultChunk(
@@ -212,7 +285,7 @@ class SearchService:
             if chunk_id in payload_by_id
         ]
 
-        await self._save_search_log(
+        trace_data.search_log_status = await self._save_search_log(
             request_id, query, query_variants, filters, hybrid_result, reranked_ids, results,
             latency_query_expansion_ms=latency_query_expansion_ms,
             latency_embed_query_ms=latency_embed_query_ms,
@@ -243,7 +316,7 @@ class SearchService:
         latency_rerank_ms: float,
         query_expansion_status: str,
         reranker_status: str,
-    ) -> None:
+    ) -> str:
         """Пишет журнал поискового запроса (Этап 8). Отказ записи не должен ронять сам поиск —
         перехватывается и логируется как предупреждение (FASTAPI_PATTERNS.md, раздел 9)."""
         search_log = SearchLog(
@@ -267,5 +340,30 @@ class SearchService:
         )
         try:
             await self.search_log_repository.save_search_log(search_log)
+            return 'ok'
         except SearchLogRepositoryError as error:
             logger.warning('⚠️ Не удалось записать журнал поискового запроса %s. Детали: %s', request_id, error)
+            return 'unavailable'
+
+
+def _filter_value(value: object | None) -> str:
+    if value is None:
+        return ''
+    return str(getattr(value, 'value', value))
+
+
+def _finalize_search_span(span: Span, data: _SearchTraceData) -> None:
+    span.set_attribute('request.id', data.request_id)
+    span.set_attribute('rag.query_variant_count', data.query_variant_count)
+    span.set_attribute('rag.dense_candidate_count', data.dense_candidate_count)
+    span.set_attribute('rag.sparse_candidate_count', data.sparse_candidate_count)
+    span.set_attribute('rag.rrf_candidate_count', data.rrf_candidate_count)
+    span.set_attribute('rag.result_chunk_count', data.result_chunk_count)
+    span.set_attribute('rag.query_expansion.status', data.query_expansion_status)
+    span.set_attribute('rag.reranker.status', data.reranker_status)
+    span.set_attribute('rag.search_log.status', data.search_log_status)
+    span.set_attribute('rag.latency.query_expansion_ms', data.latency_query_expansion_ms)
+    span.set_attribute('rag.latency.embed_query_ms', data.latency_embed_query_ms)
+    span.set_attribute('rag.latency.hybrid_search_ms', data.latency_hybrid_search_ms)
+    span.set_attribute('rag.latency.rerank_ms', data.latency_rerank_ms)
+    span.set_attribute('rag.outcome', data.outcome)

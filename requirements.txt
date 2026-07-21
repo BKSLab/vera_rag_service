@@ -17,3 +17,8 @@ qdrant-client==1.12.1
 httpx==0.28.1
 slowapi==0.1.10
 prometheus-fastapi-instrumentator==7.0.2
+
+# Minimal distributed tracing: MCP -> RAG -> Phoenix
+opentelemetry-api==1.43.0
+opentelemetry-sdk==1.43.0
+opentelemetry-exporter-otlp-proto-http==1.43.0

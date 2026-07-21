@@ -4,6 +4,8 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
+from opentelemetry import context as otel_context
+from opentelemetry import propagate
 from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -20,8 +22,10 @@ from app.clients.http_client import external_api_http_client
 from app.core.config_logger import logger
 from app.core.rate_limit import limiter
 from app.core.request_context import set_request_id
+from app.core.settings import get_settings
 from app.db.session import engine
 from app.dependencies.vectorstore import get_vector_store
+from app.observability.tracing import configure_tracing, shutdown_tracing
 from app.vectorstore.client import qdrant_client
 
 REQUEST_ID_HEADER = 'X-Request-ID'
@@ -29,24 +33,26 @@ REQUEST_ID_HEADER = 'X-Request-ID'
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info('🚀 Проверка подключения к Postgres при старте сервиса.')
+    configure_tracing(get_settings().observability)
     try:
+        logger.info('🚀 Проверка подключения к Postgres при старте сервиса.')
         async with engine.connect() as connection:
             await connection.execute(text('SELECT 1'))
+        logger.info('✅ Подключение к Postgres подтверждено.')
+
+        logger.info('🚀 Проверка коллекции Qdrant при старте сервиса.')
+        await get_vector_store().ensure_collection()
+        logger.info('✅ Коллекция Qdrant готова.')
+
+        yield
     except SQLAlchemyError:
         logger.exception('❌ Не удалось подключиться к Postgres при старте.')
         raise
-    logger.info('✅ Подключение к Postgres подтверждено.')
-
-    logger.info('🚀 Проверка коллекции Qdrant при старте сервиса.')
-    await get_vector_store().ensure_collection()
-    logger.info('✅ Коллекция Qdrant готова.')
-
-    yield
-
-    await engine.dispose()
-    await qdrant_client.close()
-    await external_api_http_client.aclose()
+    finally:
+        await engine.dispose()
+        await qdrant_client.close()
+        await external_api_http_client.aclose()
+        shutdown_tracing()
 
 
 app = FastAPI(title='vera_rag_service', lifespan=lifespan)
@@ -54,6 +60,16 @@ app = FastAPI(title='vera_rag_service', lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+
+
+@app.middleware('http')
+async def trace_context_middleware(request: Request, call_next):
+    """Активирует входящий W3C context без создания технического HTTP span."""
+    token = otel_context.attach(propagate.extract(request.headers))
+    try:
+        return await call_next(request)
+    finally:
+        otel_context.detach(token)
 
 
 @app.middleware('http')

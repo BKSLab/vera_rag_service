@@ -44,10 +44,26 @@ RAG Service — сервис семантического поиска по ба
 - **Логи** — со сквозным `request_id` (один на HTTP-запрос, виден и в логах, и в `search_logs`, и в заголовке ответа `X-Request-ID`).
 - **`GET /metrics`** (Prometheus) — latency/error rate по эндпоинтам.
 - **`/admin/dashboard`** — состояние Postgres/Qdrant, число документов/чанков, средняя latency поиска за 24 часа, сверка реестра документов с фактическим содержимым Qdrant.
+- **OpenTelemetry → Phoenix** — middleware извлекает входящий W3C `traceparent`, а `SearchService` создаёт один компактный `rag.search`. Он содержит статусы, counts и latency стадий, но никогда не query, тексты чанков, промпты или embedding-векторы. `/health` и `/metrics` spans не создают.
+
+RAG участвует в продуктовом дереве только как retrieval-узел:
+
+```text
+tool.vera_rag_kb               vera_agent_service
+└── mcp.execute.vera_rag_kb    vera_mcp_service
+    └── rag.search             vera_rag_service
+```
+
+Одинаковый `PHOENIX_PROJECT_NAME` во всех трёх сервисах задаёт общий project;
+связность дерева обеспечивает W3C propagation, а не сам факт экспорта в один
+Phoenix. Таблица `search_logs` остаётся детальным журналом retrieval и источником
+данных для анализа качества — Phoenix её не заменяет. `request.id` связывает span
+с соответствующей записью журнала. При штатной остановке tracing выполняет
+`force_flush` и shutdown.
 
 ## Стек
 
-FastAPI · Qdrant (self-hosted, векторное хранилище, named + sparse векторы) · Postgres (реестр документов + журнал поисковых запросов) · Yandex Cloud (Text Embeddings v2 + LLM-обогащение чанков) · Polza AI/Gemini (LLM-reranker) · sqladmin (админка) · slowapi (rate limiting) · Prometheus (метрики) · Alembic (миграции) · hypercorn (ASGI-сервер)
+FastAPI · Qdrant (self-hosted, векторное хранилище, named + sparse векторы) · Postgres (реестр документов + журнал поисковых запросов) · Yandex Cloud (Text Embeddings v2 + LLM-обогащение чанков) · Polza AI/Gemini (LLM-reranker) · sqladmin (админка) · slowapi (rate limiting) · Prometheus (метрики) · OpenTelemetry → Arize Phoenix · Alembic (миграции) · hypercorn (ASGI-сервер)
 
 ## API
 
@@ -239,4 +255,4 @@ ruff check .                         # линтер
 
 ## Статус
 
-Production-ready по результатам технического ревью (см. `RAG_SERVICE_PLAN.md`, Этап 12) — все найденные блокеры устранены и покрыты тестами. Перед реальным публичным запуском — реальный корпус документов от Expert и проверка качества поиска на нём (см. открытые вопросы в `RAG_SERVICE_PLAN.md`, раздел 4).
+Production-ready по результатам технического ревью (см. `RAG_SERVICE_PLAN.md`, Этап 12) — все найденные блокеры устранены и покрыты тестами. Production endpoint проверен 2026-07-22: `/api/v1/health` возвращает `status=ok`, `database=ok`. Качество поиска по реальному корпусу остаётся отдельной продуктовой проверкой (см. открытые вопросы в `RAG_SERVICE_PLAN.md`, раздел 4).

@@ -1,8 +1,20 @@
+import pytest
 import pytest_asyncio
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from app.db.models.base import Base
+from app.observability.tracing import reset_for_tests
+
+_trace_exporter = InMemorySpanExporter()
+reset_for_tests(_trace_exporter)
+
+
+@pytest.fixture
+def telemetry_exporter():
+    _trace_exporter.clear()
+    yield _trace_exporter
 
 
 @pytest_asyncio.fixture(scope='session')
