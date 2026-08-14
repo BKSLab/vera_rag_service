@@ -1,8 +1,11 @@
 import re
 import zlib
 from collections import Counter
+from functools import lru_cache
 
 from qdrant_client import models
+
+from app.core.settings import get_settings
 
 # Нативные sparse-векторы Qdrant с IDF-модификатором (SEARCH-1/QD-3,
 # AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) вместо клиентского BM25
@@ -22,8 +25,14 @@ SPARSE_VECTOR_NAME = 'bm25'
 _WORD_PATTERN = re.compile(r'\w+', re.UNICODE)
 _LEGAL_NORMALIZATION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'\bст\.', re.IGNORECASE), 'статья'),
+    (re.compile(r'\bп\.', re.IGNORECASE), 'пункт'),
+    (re.compile(r'\bч\.', re.IGNORECASE), 'часть'),
+    (re.compile(r'\bабз\.', re.IGNORECASE), 'абзац'),
     (re.compile(r'\bтк\s+рф\b', re.IGNORECASE), 'трудовой кодекс'),
     (re.compile(r'\bфз\b', re.IGNORECASE), 'федеральный закон'),
+    (re.compile(r'\bгит\b', re.IGNORECASE), 'государственная инспекция труда'),
+    (re.compile(r'\bмсэ\b', re.IGNORECASE), 'медико-социальная экспертиза'),
+    (re.compile(r'\bипра\b', re.IGNORECASE), 'индивидуальная программа реабилитации'),
 )
 
 
@@ -35,8 +44,34 @@ def normalize_sparse_text(text: str) -> str:
     return normalized
 
 
-def tokenize(text: str) -> list[str]:
-    return _WORD_PATTERN.findall(normalize_sparse_text(text))
+@lru_cache(maxsize=1)
+def _get_russian_stemmer():
+    # TODO(pass 3): добавить snowballstemmer в requirements.txt, когда файл
+    # зависимостей войдёт в разрешённый скоуп задачи.
+    try:
+        import snowballstemmer
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            'Для sparse_stemming_enabled=True требуется пакет snowballstemmer.'
+        ) from error
+    return snowballstemmer.stemmer('russian')
+
+
+@lru_cache(maxsize=100_000)
+def _stem_sparse_token(token: str) -> str:
+    return _get_russian_stemmer().stemWord(token)
+
+
+def tokenize(text: str, sparse_stemming_enabled: bool | None = None) -> list[str]:
+    tokens = _WORD_PATTERN.findall(normalize_sparse_text(text))
+    stemming_enabled = (
+        get_settings().search.sparse_stemming_enabled
+        if sparse_stemming_enabled is None
+        else sparse_stemming_enabled
+    )
+    if not stemming_enabled:
+        return tokens
+    return [_stem_sparse_token(token) for token in tokens]
 
 
 def text_to_sparse_vector(text: str) -> models.SparseVector:

@@ -7,7 +7,7 @@ from app.embeddings.embedder import embed_chunks
 from app.exceptions.document import DocumentRepositoryError
 from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError
 from app.ingestion.chunking import chunk_document, compute_parent_id
-from app.ingestion.enrichment import enrich_chunks
+from app.ingestion.enrichment import enrich_chunks, is_editorial_note_only
 from app.ingestion.preprocess import preprocess_document
 from app.models.metadata import Category
 from app.models.schemas import (
@@ -125,9 +125,10 @@ class IngestionService:
         """
         sections = preprocess_document(document_id, raw_text, category)
         chunks = chunk_document(sections, version=document_metadata.version)
+        chunks = [chunk for chunk in chunks if not is_editorial_note_only(chunk.text)]
         if len(chunks) > MAX_CHUNKS_PER_DOCUMENT:
             raise TooManyChunksError(document_id, len(chunks), MAX_CHUNKS_PER_DOCUMENT)
-        enriched_chunks = await enrich_chunks(self.llm_client, chunks)
+        enriched_chunks = await enrich_chunks(self.llm_client, chunks, document_metadata)
         return await embed_chunks(
             self.embedding_client, enriched_chunks, get_settings().yandex.embedding_doc_model_uri
         )
@@ -246,7 +247,8 @@ class IngestionService:
         )
 
         chunks = chunk_document([section], version=request.version)
-        enriched_chunks = await enrich_chunks(self.llm_client, chunks)
+        chunks = [chunk for chunk in chunks if not is_editorial_note_only(chunk.text)]
+        enriched_chunks = await enrich_chunks(self.llm_client, chunks, document_metadata)
         embedded_chunks = await embed_chunks(
             self.embedding_client, enriched_chunks, get_settings().yandex.embedding_doc_model_uri
         )

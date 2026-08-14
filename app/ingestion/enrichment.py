@@ -1,14 +1,29 @@
 import asyncio
+import re
 
 from app.clients.llm import LlmClient
 from app.core.config_logger import logger
 from app.ingestion.prompts.enrichment import CHUNK_ENRICHMENT_PROMPT
-from app.models.schemas import Chunk, ChunkEnrichmentResult, EnrichedChunk
+from app.models.schemas import Chunk, ChunkEnrichmentResult, DocumentMetadataInput, EnrichedChunk
 
 # Ingestion — офлайн-процесс, не в hot path поиска (RAG_SERVICE_PLAN.md,
 # раздел 4 «Зависимости и риски»), но конкурентные вызовы LLM всё равно
 # нужно ограничивать, чтобы не упереться в rate limit Yandex Cloud API.
 ENRICHMENT_CONCURRENCY = 5
+
+_EDITORIAL_NOTE_ONLY_PATTERN = re.compile(
+    r'^\s*(?:\('
+    r'(?=[^)]{0,500}(?:федеральн\w*\s+закон\w*|фз))'
+    r'(?=[^)]{0,500}(?:в\s+ред\.|редакци|введен|дополнен|изменен|утратил|'
+    r'исключен|наименование|статья|пункт|часть|абзац|раздел|глава))'
+    r'[^)]{1,500}\)\s*)+$',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_editorial_note_only(text: str) -> bool:
+    """Проверяет, состоит ли чанк целиком из редакционной пометки."""
+    return _EDITORIAL_NOTE_ONLY_PATTERN.fullmatch(text) is not None
 
 
 def build_index_prefix(chunk: Chunk) -> str:
@@ -21,7 +36,11 @@ def build_index_prefix(chunk: Chunk) -> str:
     return title
 
 
-async def enrich_chunk(llm_client: LlmClient, chunk: Chunk) -> EnrichedChunk:
+async def enrich_chunk(
+    llm_client: LlmClient,
+    chunk: Chunk,
+    document_metadata: DocumentMetadataInput,
+) -> EnrichedChunk:
     """Обогащает один чанк синтетическим заголовком и гипотетическими вопросами.
 
     Args:
@@ -38,7 +57,11 @@ async def enrich_chunk(llm_client: LlmClient, chunk: Chunk) -> EnrichedChunk:
     # — текст документа — недоверенный вход (готовится Expert, но риск
     # prompt injection не зависит от текущего уровня доверия к источнику).
     result: ChunkEnrichmentResult = await llm_client.get_llm_response(
-        content=f'<document_text>{chunk.text}</document_text>',
+        content=(
+            f'<source>{document_metadata.source_title}</source>\n'
+            f'<section>{chunk.section_title}</section>\n'
+            f'<document_text>{chunk.text}</document_text>'
+        ),
         prompt=CHUNK_ENRICHMENT_PROMPT,
         schema=ChunkEnrichmentResult,
     )
@@ -49,7 +72,11 @@ async def enrich_chunk(llm_client: LlmClient, chunk: Chunk) -> EnrichedChunk:
     )
 
 
-async def enrich_chunks(llm_client: LlmClient, chunks: list[Chunk]) -> list[EnrichedChunk]:
+async def enrich_chunks(
+    llm_client: LlmClient,
+    chunks: list[Chunk],
+    document_metadata: DocumentMetadataInput,
+) -> list[EnrichedChunk]:
     """Обогащает список чанков с ограничением конкурентности к LLM API.
 
     Args:
@@ -74,7 +101,7 @@ async def enrich_chunks(llm_client: LlmClient, chunks: list[Chunk]) -> list[Enri
 
     async def _enrich_with_limit(chunk: Chunk) -> EnrichedChunk:
         async with semaphore:
-            return await enrich_chunk(llm_client, chunk)
+            return await enrich_chunk(llm_client, chunk, document_metadata)
 
     logger.info('🤖 Обогащение %d чанков (конкурентность: %d).', len(chunks), ENRICHMENT_CONCURRENCY)
     results = await asyncio.gather(*(_enrich_with_limit(chunk) for chunk in chunks), return_exceptions=True)

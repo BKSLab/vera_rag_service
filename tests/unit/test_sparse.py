@@ -1,3 +1,6 @@
+import pytest
+
+from app.core.settings import SearchSettings
 from app.vectorstore.sparse import text_to_sparse_vector, tokenize
 
 
@@ -19,6 +22,49 @@ def test_tokenize_expands_common_legal_abbreviations():
         'федеральный',
         'закон',
     ]
+
+
+def test_tokenize_expands_article_paragraph_and_ipra_abbreviations():
+    assert tokenize('ст. 128, п. 5, ч. 2, абз. 3 и ИПРА') == [
+        'статья',
+        '128',
+        'пункт',
+        '5',
+        'часть',
+        '2',
+        'абзац',
+        '3',
+        'и',
+        'индивидуальная',
+        'программа',
+        'реабилитации',
+    ]
+
+
+@pytest.mark.parametrize(
+    ('left', 'right'),
+    [
+        ('инвалид', 'инвалидов'),
+        ('трудовой договор', 'трудового договора'),
+        ('сокращенная продолжительность', 'сокращенной продолжительности'),
+        ('программа реабилитации', 'программой реабилитации'),
+    ],
+)
+def test_stemming_gives_word_form_pairs_nonempty_token_intersection(left: str, right: str):
+    assert set(tokenize(left, sparse_stemming_enabled=True)) & set(
+        tokenize(right, sparse_stemming_enabled=True)
+    )
+
+
+def test_disabled_stemming_preserves_existing_tokens():
+    assert tokenize('трудового договора', sparse_stemming_enabled=False) == [
+        'трудового',
+        'договора',
+    ]
+
+
+def test_sparse_stemming_is_disabled_by_default():
+    assert SearchSettings().sparse_stemming_enabled is False
 
 
 def test_text_to_sparse_vector_is_empty_for_text_without_tokens():

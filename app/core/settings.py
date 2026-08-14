@@ -108,6 +108,7 @@ class YandexSettings(SettingsBase):
 class SearchSettings(SettingsBase):
     """Настройки гибридного поиска (Этап 5/5.1)."""
 
+    sparse_stemming_enabled: bool = False
     dense_top_k_per_category: int = 4
     sparse_top_k_per_category: int = 4
     question_dense_top_k_per_category: int = 2

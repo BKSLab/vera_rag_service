@@ -1,10 +1,17 @@
+from datetime import date
 from unittest.mock import AsyncMock
 
 from app.clients.llm import LlmClient
 from app.ingestion.chunking import chunk_document
-from app.ingestion.enrichment import build_embedding_text, build_index_prefix, enrich_chunk, enrich_chunks
+from app.ingestion.enrichment import (
+    build_embedding_text,
+    build_index_prefix,
+    enrich_chunk,
+    enrich_chunks,
+    is_editorial_note_only,
+)
 from app.ingestion.preprocess import preprocess_document
-from app.models.schemas import Chunk, ChunkEnrichmentResult, EnrichedChunk
+from app.models.schemas import Chunk, ChunkEnrichmentResult, DocumentMetadataInput, EnrichedChunk
 from app.vectorstore.sparse import tokenize
 
 
@@ -23,6 +30,16 @@ def make_chunk(chunk_index: int = 0, text: str = 'Текст чанка') -> Chu
     )
 
 
+def make_document_metadata() -> DocumentMetadataInput:
+    return DocumentMetadataInput(
+        source_title='Федеральный закон № 181-ФЗ',
+        audience='both',
+        topics=[],
+        version='2026-01-01',
+        effective_date=date(2026, 1, 1),
+    )
+
+
 async def test_enrich_chunk_returns_enriched_chunk_with_llm_result():
     llm_client = AsyncMock(spec=LlmClient)
     llm_client.get_llm_response.return_value = ChunkEnrichmentResult(
@@ -31,7 +48,7 @@ async def test_enrich_chunk_returns_enriched_chunk_with_llm_result():
     )
     chunk = make_chunk()
 
-    result = await enrich_chunk(llm_client, chunk)
+    result = await enrich_chunk(llm_client, chunk, make_document_metadata())
 
     assert isinstance(result, EnrichedChunk)
     assert result.chunk == chunk
@@ -47,10 +64,14 @@ async def test_enrich_chunk_passes_chunk_text_and_schema_to_llm_client():
     )
     chunk = make_chunk(text='Конкретный текст статьи закона.')
 
-    await enrich_chunk(llm_client, chunk)
+    await enrich_chunk(llm_client, chunk, make_document_metadata())
 
     _, call_kwargs = llm_client.get_llm_response.call_args
-    assert call_kwargs['content'] == '<document_text>Конкретный текст статьи закона.</document_text>'
+    assert call_kwargs['content'] == (
+        '<source>Федеральный закон № 181-ФЗ</source>\n'
+        '<section>Статья 21</section>\n'
+        '<document_text>Конкретный текст статьи закона.</document_text>'
+    )
     assert call_kwargs['schema'] is ChunkEnrichmentResult
 
 
@@ -66,12 +87,15 @@ async def test_enrich_chunks_preserves_order_for_multiple_chunks():
     llm_client.get_llm_response.side_effect = fake_response
     chunks = [make_chunk(chunk_index=i, text=f'Текст {i}') for i in range(7)]
 
-    enriched = await enrich_chunks(llm_client, chunks)
+    enriched = await enrich_chunks(llm_client, chunks, make_document_metadata())
 
     assert len(enriched) == 7
     for i, enriched_chunk in enumerate(enriched):
         assert enriched_chunk.chunk.chunk_index == i
-        assert enriched_chunk.synthetic_title == f'Заголовок для: <document_text>Текст {i}</document_text>'
+        assert enriched_chunk.synthetic_title == (
+            'Заголовок для: <source>Федеральный закон № 181-ФЗ</source>\n'
+            f'<section>Статья 21</section>\n<document_text>Текст {i}</document_text>'
+        )
 
 
 def test_build_embedding_text_combines_title_and_chunk_text():
@@ -122,3 +146,15 @@ def test_build_index_prefix_keeps_meaningful_authorial_heading():
     chunk.section_title = 'Как оформить квоту для инвалидов'
 
     assert build_index_prefix(chunk) == 'Как оформить квоту для инвалидов'
+
+
+def test_editorial_note_only_is_detected():
+    text = '(Статья 21 в редакции Федерального закона от 01.01.2026 № 1-ФЗ)'
+
+    assert is_editorial_note_only(text) is True
+
+
+def test_federal_law_reference_is_not_mistaken_for_editorial_note():
+    text = '(далее — Федеральный закон о социальной защите инвалидов)'
+
+    assert is_editorial_note_only(text) is False
