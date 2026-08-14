@@ -8,11 +8,10 @@ from app.search.prompts.reranker import RERANKER_PROMPT
 
 RERANK_TOP_N = 5
 
-# SEARCH-3 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — при
-# категорийно-сбалансированном поиске кандидатов может быть до ~40
-# (5 категорий × (top-4 dense + top-4 sparse)); без ограничения суммарная
-# длина промпта растёт пропорционально размеру чанка и числу категорий без
-# явного контроля.
+# SEARCH-3 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — число
+# кандидатов зависит от query expansion и набора поисковых лент. Без
+# отдельного ограничения candidate pool суммарная длина промпта растёт
+# пропорционально числу кандидатов.
 #
 # Исходное значение (600) исходило из предположения "начала чанка
 # достаточно, чтобы оценить релевантность" — опровергнуто реальным поиском
@@ -45,9 +44,9 @@ def _build_candidates_prompt(query_text: str, candidates: list[tuple[str, str]])
     провайдера), но дают модели чёткую границу "это данные" и снижают
     поверхность атаки в сочетании с инструкцией в `RERANKER_PROMPT`.
 
-    Текст каждого кандидата урезается до `CANDIDATE_TEXT_MAX_CHARS` (SEARCH-3)
-    — ограничивает суммарную длину промпта независимо от числа кандидатов
-    и размера чанков.
+    Текст каждого кандидата урезается до `CANDIDATE_TEXT_MAX_CHARS` (SEARCH-3).
+    Срез ограничивает размер одного кандидата, но суммарная длина промпта
+    остаётся линейной по их числу.
     """
     numbered = '\n\n'.join(
         f'<candidate id="{i}">{text[:CANDIDATE_TEXT_MAX_CHARS]}</candidate>'
@@ -71,7 +70,7 @@ async def rerank_chunks_with_status(
     candidates: list[tuple[str, str]],
     top_n: int = RERANK_TOP_N,
 ) -> RerankOutcome:
-    """Переранжирует top-20 кандидатов LLM'ом и возвращает top-N chunk_id (Этап 6).
+    """Переранжирует кандидатов LLM'ом и возвращает top-N chunk_id (Этап 6).
 
     При отказе LLM (исчерпаны все retry) деградирует до исходного порядка
     кандидатов (RRF) вместо падения всего поискового запроса — reranker
@@ -95,7 +94,7 @@ async def rerank_chunks_with_status(
     try:
         result: RerankResult = await llm_client.get_llm_response(
             content=_build_candidates_prompt(query_text, candidates),
-            prompt=RERANKER_PROMPT,
+            prompt=RERANKER_PROMPT.replace('{top_n}', str(top_n)),
             schema=RerankResult,
         )
     except LlmApiRequestError as error:

@@ -1,5 +1,5 @@
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import get_args
 
 from qdrant_client import AsyncQdrantClient, models
@@ -16,6 +16,22 @@ DENSE_TOP_K = 20
 SPARSE_TOP_K = 20
 
 ALL_CATEGORIES: tuple[Category, ...] = get_args(Category)
+
+
+def merge_question_lanes(
+    lanes: list[list[tuple[str, float]]], limit: int
+) -> list[tuple[str, float]]:
+    """Сворачивает question_0..4 одной категории в одну ленту по лучшему рангу."""
+    best_rank: dict[str, int] = {}
+    score_by_id: dict[str, float] = {}
+    for lane in lanes:
+        for rank, (chunk_id, score) in enumerate(lane, start=1):
+            if chunk_id not in best_rank or rank < best_rank[chunk_id]:
+                best_rank[chunk_id] = rank
+                score_by_id[chunk_id] = score
+
+    ordered = sorted(best_rank, key=lambda chunk_id: best_rank[chunk_id])[:limit]
+    return [(chunk_id, score_by_id[chunk_id]) for chunk_id in ordered]
 
 
 def _audience_match_values(audience: Audience) -> list[str]:
@@ -143,7 +159,11 @@ async def _category_balanced_lanes(
     query_vector: list[float],
     query_text: str,
     filters: SearchFilters | None,
-) -> tuple[list[list[tuple[str, float]]], list[list[tuple[str, float]]], list[list[tuple[str, float]]]]:
+) -> tuple[
+    list[list[tuple[str, float]]],
+    list[list[list[tuple[str, float]]]],
+    list[list[tuple[str, float]]],
+]:
     """Запускает dense и sparse поиск отдельно на каждую `category` (Этап 5.1 плана).
 
     Каждая категория — собственный ранжированный список, не общий пул кандидатов:
@@ -164,8 +184,8 @@ async def _category_balanced_lanes(
 
     Returns:
         (chunk_dense_lanes, question_dense_lanes, sparse_lanes) — ранжированные
-        списки (chunk_id, score): основной dense по каждой категории, dense
-        по `question_0..4` для каждой категории и sparse по каждой категории.
+        списки (chunk_id, score): основной dense по каждой категории, пять
+        question-лент, сгруппированных по категории, и sparse по категории.
     """
     per_category_filters = [
         SearchFilters(
@@ -212,7 +232,21 @@ async def _category_balanced_lanes(
             )
         ),
     )
-    return list(chunk_dense_lanes), list(question_dense_lanes_nested), list(sparse_lanes)
+    question_lanes_per_category = [
+        list(question_dense_lanes_nested[index:index + len(QUESTION_VECTOR_NAMES)])
+        for index in range(0, len(question_dense_lanes_nested), len(QUESTION_VECTOR_NAMES))
+    ]
+    return list(chunk_dense_lanes), question_lanes_per_category, list(sparse_lanes)
+
+
+def _record_candidate_sources(
+    target: dict[str, set[tuple[str, Category]]],
+    lane: list[tuple[str, float]],
+    lane_type: str,
+    category: Category,
+) -> None:
+    for chunk_id, _ in lane:
+        target.setdefault(chunk_id, set()).add((lane_type, category))
 
 
 @dataclass
@@ -227,6 +261,7 @@ class HybridSearchResult:
     dense: list[tuple[str, float]]
     sparse: list[tuple[str, float]]
     fused: list[tuple[str, float]]
+    candidate_sources: dict[str, set[tuple[str, Category]]] = field(default_factory=dict)
 
 
 async def hybrid_search(
@@ -261,6 +296,7 @@ async def hybrid_search(
         переносится в финальный ответ API как относительный показатель
         уверенности (раздел 3 плана), реранжирование само по себе scores не даёт.
     """
+    candidate_sources: dict[str, set[tuple[str, Category]]] = {}
     if filters is not None and filters.category is not None:
         search_settings = get_settings().search
         dense_results, question_dense_results_nested, sparse_results = await asyncio.gather(
@@ -278,29 +314,68 @@ async def hybrid_search(
             sparse_search(client, collection_name, query_text, filters),
         )
         question_dense_results = [item for lane in question_dense_results_nested for item in lane]
+        question_fusion_lanes = (
+            list(question_dense_results_nested)
+            if search_settings.question_lane_merge_limit is None
+            else [
+                merge_question_lanes(
+                    list(question_dense_results_nested), search_settings.question_lane_merge_limit
+                )
+            ]
+        )
         fused = rrf_fusion(
             [[chunk_id for chunk_id, _ in dense_results]]
-            + [[chunk_id for chunk_id, _ in lane] for lane in question_dense_results_nested]
+            + [[chunk_id for chunk_id, _ in lane] for lane in question_fusion_lanes]
             + [[chunk_id for chunk_id, _ in sparse_results]]
         )
+        _record_candidate_sources(candidate_sources, dense_results, 'chunk-dense', filters.category)
+        for lane in question_dense_results_nested:
+            _record_candidate_sources(candidate_sources, lane, 'question-dense', filters.category)
+        _record_candidate_sources(candidate_sources, sparse_results, 'sparse', filters.category)
     else:
-        dense_lanes, question_dense_lanes, sparse_lanes = await _category_balanced_lanes(
+        dense_lanes, question_lanes_per_category, sparse_lanes = await _category_balanced_lanes(
             client, collection_name, query_vector, query_text, filters
         )
         dense_results = [item for lane in dense_lanes for item in lane]
-        question_dense_results = [item for lane in question_dense_lanes for item in lane]
+        question_dense_results = [
+            item
+            for category_lanes in question_lanes_per_category
+            for lane in category_lanes
+            for item in lane
+        ]
         sparse_results = [item for lane in sparse_lanes for item in lane]
+        search_settings = get_settings().search
+        question_fusion_lanes = (
+            [lane for category_lanes in question_lanes_per_category for lane in category_lanes]
+            if search_settings.question_lane_merge_limit is None
+            else [
+                merge_question_lanes(category_lanes, search_settings.question_lane_merge_limit)
+                for category_lanes in question_lanes_per_category
+            ]
+        )
         fused = rrf_fusion(
             [[chunk_id for chunk_id, _ in lane] for lane in dense_lanes]
-            + [[chunk_id for chunk_id, _ in lane] for lane in question_dense_lanes]
+            + [[chunk_id for chunk_id, _ in lane] for lane in question_fusion_lanes]
             + [[chunk_id for chunk_id, _ in lane] for lane in sparse_lanes]
         )
+        for category, dense_lane, question_lanes, sparse_lane in zip(
+            ALL_CATEGORIES, dense_lanes, question_lanes_per_category, sparse_lanes, strict=True
+        ):
+            _record_candidate_sources(candidate_sources, dense_lane, 'chunk-dense', category)
+            for lane in question_lanes:
+                _record_candidate_sources(candidate_sources, lane, 'question-dense', category)
+            _record_candidate_sources(candidate_sources, sparse_lane, 'sparse', category)
 
     logger.info(
         '🔍 Hybrid search: dense=%d, question_dense=%d, sparse=%d кандидатов.',
         len(dense_results), len(question_dense_results), len(sparse_results),
     )
-    return HybridSearchResult(dense=[*dense_results, *question_dense_results], sparse=sparse_results, fused=fused)
+    return HybridSearchResult(
+        dense=[*dense_results, *question_dense_results],
+        sparse=sparse_results,
+        fused=fused,
+        candidate_sources=candidate_sources,
+    )
 
 
 async def get_candidate_chunk_ids(

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
+import app.services.search as search_service_module
 from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.exceptions.search_log import SearchLogRepositoryError
@@ -63,6 +64,7 @@ async def test_search_returns_reranked_chunk_and_saves_log():
 
     assert len(results) == 1
     assert results[0].chunk_id == CHUNK_ID
+    assert results[0].rerank_rank == 1
     search_log_repository.save_search_log.assert_awaited_once()
     saved_log = search_log_repository.save_search_log.await_args.args[0]
     assert saved_log.query == 'квота на инвалидов'
@@ -99,3 +101,31 @@ async def test_search_degrades_when_search_log_save_fails():
     results = await service.search(query='квота на инвалидов', filters=SearchFilters(), top_k=5)
 
     assert len(results) == 1
+
+
+async def test_search_top_k_ten_returns_ten_chunks_and_logs_candidate_sources(monkeypatch):
+    service, _ = _build_service()
+    chunk_ids = [f'{index:08d}-1111-1111-1111-111111111111' for index in range(10)]
+    points = [SimpleNamespace(id=chunk_id, score=1.0 - index / 100) for index, chunk_id in enumerate(chunk_ids)]
+    service.vector_store.client.query_points.return_value = SimpleNamespace(points=points)
+    service.vector_store.client.retrieve.return_value = [
+        SimpleNamespace(id=chunk_id, payload={**CHUNK_PAYLOAD, 'text': f'Текст чанка {index}'})
+        for index, chunk_id in enumerate(chunk_ids)
+    ]
+    service.reranker_llm_client.get_llm_response.return_value = RerankResult(
+        ranked_indices=list(range(1, 11))
+    )
+    log_info = Mock()
+    monkeypatch.setattr(search_service_module.logger, 'info', log_info)
+
+    results = await service.search(query='квота на инвалидов', filters=SearchFilters(), top_k=10)
+
+    assert [result.chunk_id for result in results] == chunk_ids
+    assert [result.rerank_rank for result in results] == list(range(1, 11))
+    reranker_prompt = service.reranker_llm_client.get_llm_response.await_args.kwargs['prompt']
+    assert 'не более 10' in reranker_prompt
+    source_log_calls = [call for call in log_info.call_args_list if 'Top-кандидат' in call.args[0]]
+    assert len(source_log_calls) == 10
+    assert all('chunk-dense:' in call.args[2] for call in source_log_calls)
+    assert all('question-dense:' in call.args[2] for call in source_log_calls)
+    assert all('sparse:' in call.args[2] for call in source_log_calls)

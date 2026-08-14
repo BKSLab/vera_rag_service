@@ -113,6 +113,8 @@ class SearchSettings(SettingsBase):
     sparse_top_k_per_category: int = 4
     question_dense_top_k_per_category: int = 2
     question_dense_top_k: int = 10
+    question_lane_merge_limit: int | None = None
+    rerank_candidate_limit: int | None = None
     """Top-K на каждую category при категорийно-сбалансированном поиске
     (SEARCH-2, AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — выбраны как
     компромисс без эмпирической проверки на реальном корпусе (раздел 5.1

@@ -54,6 +54,19 @@ async def test_rerank_chunks_respects_top_n():
     assert result == ['chunk-0', 'chunk-1']
 
 
+async def test_rerank_chunks_uses_top_n_in_prompt_and_returns_ten_candidates():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = RerankResult(ranked_indices=list(range(1, 11)))
+    candidates = make_candidates(10)
+
+    result = await rerank_chunks(llm_client, 'запрос', candidates, top_n=10)
+
+    assert result == [f'chunk-{index}' for index in range(10)]
+    prompt = llm_client.get_llm_response.await_args.kwargs['prompt']
+    assert 'не более 10' in prompt
+    assert '{top_n}' not in prompt
+
+
 async def test_rerank_chunks_falls_back_to_original_order_when_llm_unavailable():
     llm_client = AsyncMock(spec=LlmClient)
     llm_client.get_llm_response.side_effect = LlmApiRequestError(error_details='boom', request_url='https://x')
@@ -120,8 +133,7 @@ async def test_rerank_chunks_with_status_reports_no_relevant_candidates():
 
 
 def test_build_candidates_prompt_truncates_long_candidate_text():
-    """SEARCH-3 — суммарная длина промпта не должна расти неограниченно
-    с размером чанка/числом категорий."""
+    """SEARCH-3 — размер каждого кандидата ограничен независимо от длины чанка."""
     candidates = [('chunk-0', 'а' * (CANDIDATE_TEXT_MAX_CHARS + 500))]
 
     prompt = _build_candidates_prompt('запрос', candidates)

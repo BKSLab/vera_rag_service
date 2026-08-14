@@ -223,7 +223,16 @@ class SearchService:
         # категорийные ленты внутри одного hybrid_search (Этап 5.1) —
         # каждый вариант — ещё один ранжированный список chunk_id.
         fused = rrf_fusion([[chunk_id for chunk_id, _ in result.fused] for result in variant_hybrid_results])
-        hybrid_result = HybridSearchResult(dense=dense, sparse=sparse, fused=fused)
+        candidate_sources = {}
+        for result in variant_hybrid_results:
+            for chunk_id, sources in result.candidate_sources.items():
+                candidate_sources.setdefault(chunk_id, set()).update(sources)
+        hybrid_result = HybridSearchResult(
+            dense=dense,
+            sparse=sparse,
+            fused=fused,
+            candidate_sources=candidate_sources,
+        )
         trace_data.dense_candidate_count = len(dense)
         trace_data.sparse_candidate_count = len(sparse)
         trace_data.rrf_candidate_count = len(fused)
@@ -247,7 +256,11 @@ class SearchService:
             )
 
         rrf_scores = dict(hybrid_result.fused)
-        candidate_ids = [chunk_id for chunk_id, _ in hybrid_result.fused]
+        rerank_candidates = hybrid_result.fused
+        rerank_candidate_limit = get_settings().search.rerank_candidate_limit
+        if rerank_candidate_limit is not None:
+            rerank_candidates = rerank_candidates[:rerank_candidate_limit]
+        candidate_ids = [chunk_id for chunk_id, _ in rerank_candidates]
 
         points = await self.vector_store.client.retrieve(
             collection_name=self.vector_store.collection_name, ids=candidate_ids, with_payload=True
@@ -280,10 +293,17 @@ class SearchService:
                 section_number=payload_by_id[chunk_id].get('section_number'),
                 section_title=payload_by_id[chunk_id].get('section_title'),
                 score=rrf_scores.get(chunk_id, 0.0),
+                rerank_rank=rerank_rank,
             )
-            for chunk_id in reranked_ids
+            for rerank_rank, chunk_id in enumerate(reranked_ids, start=1)
             if chunk_id in payload_by_id
         ]
+        for result in results:
+            sources = ', '.join(
+                f'{lane_type}:{category}'
+                for lane_type, category in sorted(hybrid_result.candidate_sources.get(result.chunk_id, set()))
+            )
+            logger.info('🔎 Top-кандидат %s: источники=%s.', result.chunk_id, sources)
 
         trace_data.search_log_status = await self._save_search_log(
             request_id, query, query_variants, filters, hybrid_result, reranked_ids, results,

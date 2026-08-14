@@ -160,6 +160,7 @@ class SearchResultChunk(BaseModel):
     section_number: str | None = Field(None, description='Номер статьи/пункта из структуры документа (например, "128").')
     section_title: str | None = Field(None, description='Заголовок статьи/пункта (например, "Статья 128. Отпуска без сохранения заработной платы").')
     score: float = Field(..., description='Итоговый score после RRF fusion.')
+    rerank_rank: int = Field(..., ge=1, description='Позиция чанка после LLM-reranker, начиная с 1.')
 
 
 class QueryVariant(BaseModel):
