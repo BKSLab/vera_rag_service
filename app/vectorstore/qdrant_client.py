@@ -5,6 +5,7 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.core.config_logger import logger
 from app.exceptions.vectorstore import QdrantCollectionSchemaError
+from app.ingestion.enrichment import build_index_prefix
 from app.models.metadata import ChunkMetadata
 from app.models.schemas import DocumentMetadataInput, EmbeddedChunk
 from app.vectorstore.sparse import SPARSE_VECTOR_NAME, text_to_sparse_vector
@@ -275,10 +276,13 @@ class QdrantVectorStore:
         points = []
         for embedded_chunk in embedded_chunks:
             chunk = embedded_chunk.enriched_chunk.chunk
+            sparse_text = (
+                f'{build_index_prefix(chunk)}\n{document_metadata.source_title}\n{chunk.text}'.strip()
+            )
 
             vector = {
                 CHUNK_VECTOR_NAME: embedded_chunk.chunk_vector,
-                SPARSE_VECTOR_NAME: text_to_sparse_vector(chunk.text),
+                SPARSE_VECTOR_NAME: text_to_sparse_vector(sparse_text),
             }
             for question_vector, vector_name in zip(
                 embedded_chunk.question_vectors, QUESTION_VECTOR_NAMES, strict=False

@@ -11,6 +11,16 @@ from app.models.schemas import Chunk, ChunkEnrichmentResult, EnrichedChunk
 ENRICHMENT_CONCURRENCY = 5
 
 
+def build_index_prefix(chunk: Chunk) -> str:
+    """Возвращает информативный заголовок секции для индексируемого текста."""
+    title = chunk.section_title
+    if not title or title == chunk.document_id:
+        return ''
+    if chunk.text.lstrip().startswith(title[:40]):
+        return ''
+    return title
+
+
 async def enrich_chunk(llm_client: LlmClient, chunk: Chunk) -> EnrichedChunk:
     """Обогащает один чанк синтетическим заголовком и гипотетическими вопросами.
 
@@ -91,4 +101,6 @@ def build_embedding_text(enriched_chunk: EnrichedChunk) -> str:
     Returns:
         Текст вида "<synthetic_title>\\n\\n<текст чанка>".
     """
-    return f'{enriched_chunk.synthetic_title}\n\n{enriched_chunk.chunk.text}'
+    chunk = enriched_chunk.chunk
+    parts = [build_index_prefix(chunk), enriched_chunk.synthetic_title, chunk.text]
+    return '\n\n'.join(part for part in parts if part)
