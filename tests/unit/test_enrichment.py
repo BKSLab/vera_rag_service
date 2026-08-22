@@ -154,6 +154,15 @@ def test_editorial_note_only_is_detected():
     assert is_editorial_note_only(text) is True
 
 
+def test_editorial_note_only_detects_note_with_leading_structural_word():
+    text = (
+        'Часть. (Утратила силу - Федеральный закон от 25.05.2020 № 157-ФЗ)\n\n'
+        'Часть. (Утратила силу - Федеральный закон от 25.05.2020 № 157-ФЗ)'
+    )
+
+    assert is_editorial_note_only(text) is True
+
+
 def test_federal_law_reference_is_not_mistaken_for_editorial_note():
     text = '(далее — Федеральный закон о социальной защите инвалидов)'
 

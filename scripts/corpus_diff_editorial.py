@@ -6,7 +6,8 @@ from pathlib import Path
 from app.ingestion.chunking import chunk_document
 from app.ingestion.enrichment import is_editorial_note_only
 from app.ingestion.extract import extract_text_from_upload
-from app.ingestion.preprocess import clean_text, preprocess_document
+from app.ingestion.preprocess import preprocess_document
+from app.models.schemas import Chunk
 
 _ROOT = Path(__file__).resolve().parents[1]
 _CONTEXT_CHARS = 80
@@ -32,25 +33,50 @@ def _category_for(path: Path) -> str:
     return 'labor_code' if path.name == 'Трудовой_кодекс_Российской_Федерации.docx' else 'other_npa'
 
 
+def _match_context(chunk: Chunk, match: re.Match[str]) -> str:
+    start = max(0, match.start() - _CONTEXT_CHARS)
+    end = min(len(chunk.text), match.end() + _CONTEXT_CHARS)
+    return chunk.text[start:end].replace('\n', '\\n')
+
+
+def _print_inline_match(path: Path, chunk: Chunk, match: re.Match[str]) -> None:
+    print(
+        f'{path.relative_to(_ROOT)} [INLINE/CONTENT] chunk={chunk.chunk_index} '
+        f'section={chunk.section_number or "-"} {match.start()}:{match.end()}'
+    )
+    print(_match_context(chunk, match))
+
+
 def main() -> None:
     matches_count = 0
+    note_only_chunks_count = 0
     for path in _corpus_files():
         raw_text = extract_text_from_upload(path.name, path.read_bytes())
-        text = clean_text(raw_text)
-        sections = preprocess_document(path.stem, text, _category_for(path))
+        sections = preprocess_document(path.stem, raw_text, _category_for(path))
         chunks = chunk_document(sections, version='corpus-diff')
+        note_only_chunks = [chunk for chunk in chunks if is_editorial_note_only(chunk.text)]
+        content_chunks = [chunk for chunk in chunks if not is_editorial_note_only(chunk.text)]
 
-        for match in _EDITORIAL_CANDIDATE_PATTERN.finditer(text):
-            matches_count += 1
-            owner = next((chunk for chunk in chunks if match.group(0) in chunk.text), None)
-            label = 'NOTE-ONLY' if owner and is_editorial_note_only(owner.text) else 'INLINE/CONTENT'
-            start = max(0, match.start() - _CONTEXT_CHARS)
-            end = min(len(text), match.end() + _CONTEXT_CHARS)
-            context = text[start:end].replace('\n', '\\n')
-            print(f'{path.relative_to(_ROOT)} [{label}] {match.start()}:{match.end()}')
-            print(context)
+        note_only_chunks_count += len(note_only_chunks)
+        print(f'\n{path.relative_to(_ROOT)} — редакционные чанки ({len(note_only_chunks)})')
+        for chunk in note_only_chunks:
+            matches = list(_EDITORIAL_CANDIDATE_PATTERN.finditer(chunk.text))
+            matches_count += len(matches)
+            print(
+                f'{path.relative_to(_ROOT)} [NOTE-ONLY] chunk={chunk.chunk_index} '
+                f'section={chunk.section_number or "-"} совпадений={len(matches)}'
+            )
+            for match in matches:
+                print(f'  {match.start()}:{match.end()} {_match_context(chunk, match)}')
+
+        print(f'{path.relative_to(_ROOT)} — INLINE/CONTENT')
+        for chunk in content_chunks:
+            for match in _EDITORIAL_CANDIDATE_PATTERN.finditer(chunk.text):
+                matches_count += 1
+                _print_inline_match(path, chunk, match)
 
     print(f'\nВсего совпадений: {matches_count}')
+    print(f'Всего note-only чанков: {note_only_chunks_count}')
 
 
 if __name__ == '__main__':

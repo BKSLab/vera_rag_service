@@ -41,6 +41,24 @@ def test_tokenize_expands_article_paragraph_and_ipra_abbreviations():
     ]
 
 
+def test_tokenize_does_not_expand_compound_abbreviations():
+    assert 'пункт' not in tokenize('иные лица и т.п., а также')
+    assert 'часть' not in tokenize('в т.ч. 2 работника с инвалидностью')
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('ст.128', ['статья', '128']),
+        ('п.5', ['пункт', '5']),
+        ('ч.2', ['часть', '2']),
+        ('абз.3', ['абзац', '3']),
+    ],
+)
+def test_tokenize_splits_abbreviation_written_without_space(text: str, expected: list[str]):
+    assert tokenize(text) == expected
+
+
 @pytest.mark.parametrize(
     ('left', 'right'),
     [

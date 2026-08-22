@@ -12,11 +12,14 @@ from app.models.schemas import Chunk, ChunkEnrichmentResult, DocumentMetadataInp
 ENRICHMENT_CONCURRENCY = 5
 
 _EDITORIAL_NOTE_ONLY_PATTERN = re.compile(
-    r'^\s*(?:\('
+    r'^\s*(?:'
+    r'(?:(?:часть|пункт|абзац|статья|наименование|раздел|глава)\.\s*)?'
+    r'\('
     r'(?=[^)]{0,500}(?:федеральн\w*\s+закон\w*|фз))'
     r'(?=[^)]{0,500}(?:в\s+ред\.|редакци|введен|дополнен|изменен|утратил|'
     r'исключен|наименование|статья|пункт|часть|абзац|раздел|глава))'
-    r'[^)]{1,500}\)\s*)+$',
+    r'[^)]{1,500}\)\s*'
+    r')+$',
     re.IGNORECASE | re.DOTALL,
 )
 

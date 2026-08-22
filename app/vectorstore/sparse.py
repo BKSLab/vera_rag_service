@@ -24,10 +24,10 @@ SPARSE_VECTOR_NAME = 'bm25'
 
 _WORD_PATTERN = re.compile(r'\w+', re.UNICODE)
 _LEGAL_NORMALIZATION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r'\bст\.', re.IGNORECASE), 'статья'),
-    (re.compile(r'\bп\.', re.IGNORECASE), 'пункт'),
-    (re.compile(r'\bч\.', re.IGNORECASE), 'часть'),
-    (re.compile(r'\bабз\.', re.IGNORECASE), 'абзац'),
+    (re.compile(r'(?<![\w.])ст\.(?=\s*\d)', re.IGNORECASE), 'статья '),
+    (re.compile(r'(?<![\w.])п\.(?=\s*\d)', re.IGNORECASE), 'пункт '),
+    (re.compile(r'(?<![\w.])ч\.(?=\s*\d)', re.IGNORECASE), 'часть '),
+    (re.compile(r'(?<![\w.])абз\.(?=\s*\d)', re.IGNORECASE), 'абзац '),
     (re.compile(r'\bтк\s+рф\b', re.IGNORECASE), 'трудовой кодекс'),
     (re.compile(r'\bфз\b', re.IGNORECASE), 'федеральный закон'),
     (re.compile(r'\bгит\b', re.IGNORECASE), 'государственная инспекция труда'),
@@ -46,8 +46,6 @@ def normalize_sparse_text(text: str) -> str:
 
 @lru_cache(maxsize=1)
 def _get_russian_stemmer():
-    # TODO(pass 3): добавить snowballstemmer в requirements.txt, когда файл
-    # зависимостей войдёт в разрешённый скоуп задачи.
     try:
         import snowballstemmer
     except ModuleNotFoundError as error:

@@ -22,6 +22,7 @@ async def test_search_chunks_returns_200_with_results(async_client: AsyncClient)
             topics=['quota'],
             category='federal_law',
             score=0.9,
+            rerank_rank=1,
         )
     ]
     app.dependency_overrides[get_search_service] = lambda: fake_service
