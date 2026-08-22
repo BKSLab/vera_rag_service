@@ -1,4 +1,5 @@
 from app.ingestion.chunking import chunk_document, chunk_section_text, chunk_text, estimate_tokens
+from app.ingestion.preprocess import extract_npa_sections
 from app.models.schemas import Section
 
 
@@ -212,6 +213,68 @@ def test_chunk_document_generates_unique_chunk_ids():
 
     chunk_ids = {chunk.chunk_id for chunk in chunks}
     assert len(chunk_ids) == len(chunks)
+
+
+def test_chunk_document_generates_unique_ids_for_multiple_unnumbered_sections():
+    sections = [
+        Section(
+            document_id='article-1',
+            category='authorial',
+            section_index=section_index,
+            section_number=None,
+            section_title=f'Раздел {section_index}',
+            text=f'Текст раздела {section_index}.',
+        )
+        for section_index in range(3)
+    ]
+
+    chunks = chunk_document(sections, version='2026-01-01')
+
+    assert [chunk.parent_id for chunk in chunks] == ['article-1#0', 'article-1#1', 'article-1#2']
+    assert len({chunk.chunk_id for chunk in chunks}) == len(chunks)
+
+
+def test_chunk_document_keeps_ids_unique_across_multichunk_unnumbered_sections():
+    sections = [
+        Section(
+            document_id='article-1',
+            category='authorial',
+            section_index=section_index,
+            section_number=None,
+            section_title=f'Раздел {section_index}',
+            text=make_words(2000, word=f'раздел{section_index}слово'),
+        )
+        for section_index in range(2)
+    ]
+
+    chunks = chunk_document(sections, version='2026-01-01')
+
+    assert all(sum(chunk.section_index == index for chunk in chunks) > 1 for index in range(2))
+    assert {chunk.parent_id for chunk in chunks} == {'article-1#0', 'article-1#1'}
+    assert len({chunk.chunk_id for chunk in chunks}) == len(chunks)
+
+
+def test_chunk_document_preserves_repeated_numbering_blocks_without_merging_texts():
+    text = (
+        '1. Норма 1.\n'
+        '2. Норма 2.\n'
+        'Приложение\n'
+        '1. Приложение 1.\n'
+        '2. Приложение 2.'
+    )
+    sections = extract_npa_sections('decree-1', text, 'other_npa')
+
+    chunks = chunk_document(sections, version='2026-01-01')
+
+    assert len(sections) == len(chunks) == 2 + 2
+    assert [chunk.parent_id for chunk in chunks] == [
+        'decree-1:1',
+        'decree-1:2',
+        'decree-1:1#2',
+        'decree-1:2#2',
+    ]
+    assert [chunk.text for chunk in chunks] == [section.text for section in sections]
+    assert len({chunk.chunk_id for chunk in chunks}) == len(chunks)
 
 
 def test_chunk_document_is_deterministic_for_same_document_id_version_and_index():

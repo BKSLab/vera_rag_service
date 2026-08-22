@@ -303,6 +303,15 @@ class QdrantVectorStore:
             await self.client.upsert(collection_name=self.collection_name, points=batch)
         logger.info('✅ Upsert завершён: %d чанков.', len(points))
 
+    async def delete_chunks(self, chunk_ids: list[str]) -> None:
+        """Удаляет точки по точным ID, не затрагивая остальные чанки scope."""
+        if not chunk_ids:
+            return
+        await self.client.delete(
+            collection_name=self.collection_name,
+            points_selector=models.PointIdsList(points=chunk_ids),
+        )
+
     async def delete_document(self, document_id: str, version: str | None = None) -> None:
         """Удаляет все чанки документа (опционально — только указанной версии).
 
@@ -381,6 +390,127 @@ class QdrantVectorStore:
             exact=True,
         )
         return result.count
+
+    async def get_actual_document_chunk_ids(self, document_id: str, version: str) -> list[str]:
+        """Возвращает ID актуальных чанков точной версии документа."""
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(key='document_id', match=models.MatchValue(value=document_id)),
+                models.FieldCondition(key='version', match=models.MatchValue(value=version)),
+                models.FieldCondition(key='is_actual', match=models.MatchValue(value=True)),
+            ]
+        )
+
+        chunk_ids: list[str] = []
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            chunk_ids.extend(str(point.id) for point in points)
+            if offset is None:
+                break
+
+        return chunk_ids
+
+    async def get_document_version_chunk_ids(self, document_id: str, version: str) -> list[str]:
+        """Возвращает все ID точной версии документа независимо от is_actual."""
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(key='document_id', match=models.MatchValue(value=document_id)),
+                models.FieldCondition(key='version', match=models.MatchValue(value=version)),
+            ]
+        )
+
+        chunk_ids: list[str] = []
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            chunk_ids.extend(str(point.id) for point in points)
+            if offset is None:
+                break
+
+        return chunk_ids
+
+    async def count_actual_section_chunks(self, parent_id: str, version: str) -> int:
+        """Считает актуальные чанки точной версии одной секции."""
+        result = await self.client.count(
+            collection_name=self.collection_name,
+            count_filter=models.Filter(
+                must=[
+                    models.FieldCondition(key='parent_id', match=models.MatchValue(value=parent_id)),
+                    models.FieldCondition(key='version', match=models.MatchValue(value=version)),
+                    models.FieldCondition(key='is_actual', match=models.MatchValue(value=True)),
+                ]
+            ),
+            exact=True,
+        )
+        return result.count
+
+    async def get_actual_section_version_chunk_ids(self, parent_id: str, version: str) -> list[str]:
+        """Возвращает ID актуальных чанков точной версии одной секции."""
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(key='parent_id', match=models.MatchValue(value=parent_id)),
+                models.FieldCondition(key='version', match=models.MatchValue(value=version)),
+                models.FieldCondition(key='is_actual', match=models.MatchValue(value=True)),
+            ]
+        )
+
+        chunk_ids: list[str] = []
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            chunk_ids.extend(str(point.id) for point in points)
+            if offset is None:
+                break
+
+        return chunk_ids
+
+    async def get_section_version_chunk_ids(self, parent_id: str, version: str) -> list[str]:
+        """Возвращает все ID точной версии секции независимо от is_actual."""
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(key='parent_id', match=models.MatchValue(value=parent_id)),
+                models.FieldCondition(key='version', match=models.MatchValue(value=version)),
+            ]
+        )
+
+        chunk_ids: list[str] = []
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            chunk_ids.extend(str(point.id) for point in points)
+            if offset is None:
+                break
+
+        return chunk_ids
 
     async def get_actual_section_chunk_ids(
         self, parent_id: str, exclude_version: str | None = None

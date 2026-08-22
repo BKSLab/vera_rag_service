@@ -1,3 +1,54 @@
+from collections.abc import Iterable
+
+
+class IngestionIntegrityError(Exception):
+    """Подготовленные чанки и фактические точки Qdrant не совпали."""
+
+    status_code = 500
+
+    def __init__(
+        self,
+        document_id: str,
+        version: str,
+        scope: str,
+        expected_count: int,
+        actual_count: int,
+        *,
+        duplicate_chunk_ids: Iterable[str] = (),
+        missing_chunk_ids: Iterable[str] = (),
+        unexpected_chunk_ids: Iterable[str] = (),
+    ):
+        self.document_id = document_id
+        self.version = version
+        self.scope = scope
+        self.expected_count = expected_count
+        self.actual_count = actual_count
+        self.duplicate_chunk_ids = sorted(set(duplicate_chunk_ids))
+        self.missing_chunk_ids = sorted(set(missing_chunk_ids))
+        self.unexpected_chunk_ids = sorted(set(unexpected_chunk_ids))
+        super().__init__(self.__str__())
+
+    def __str__(self) -> str:
+        details = [
+            f'expected_count={self.expected_count}',
+            f'actual_count={self.actual_count}',
+        ]
+        if self.duplicate_chunk_ids:
+            details.append(f'duplicate_chunk_ids={self.duplicate_chunk_ids!r}')
+        if self.missing_chunk_ids:
+            details.append(f'missing_chunk_ids={self.missing_chunk_ids!r}')
+        if self.unexpected_chunk_ids:
+            details.append(f'unexpected_chunk_ids={self.unexpected_chunk_ids!r}')
+        return (
+            f'Нарушен инвариант целостности ingestion для документа {self.document_id!r} '
+            f'(version={self.version!r}, scope={self.scope!r}): ' + '; '.join(details)
+        )
+
+    @property
+    def detail(self) -> str:
+        return str(self)
+
+
 class RawTextTooLargeError(Exception):
     """`raw_text` превышает допустимый размер (API-3).
 

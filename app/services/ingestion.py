@@ -1,3 +1,5 @@
+from collections import Counter
+
 from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.core.config_logger import logger
@@ -5,7 +7,12 @@ from app.core.settings import get_settings
 from app.db.models.document import Document
 from app.embeddings.embedder import embed_chunks
 from app.exceptions.document import DocumentRepositoryError
-from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError
+from app.exceptions.ingestion import (
+    IngestionIntegrityError,
+    RawTextTooLargeError,
+    TooManyChunksError,
+    TopicsNotAllowedForCategoryError,
+)
 from app.ingestion.chunking import chunk_document, compute_parent_id
 from app.ingestion.enrichment import enrich_chunks, is_editorial_note_only
 from app.ingestion.preprocess import preprocess_document
@@ -14,6 +21,7 @@ from app.models.schemas import (
     MAX_RAW_TEXT_LENGTH,
     SECTION_UPDATE_ALLOWED_CATEGORIES,
     TOPICS_ALLOWED_CATEGORIES,
+    Chunk,
     DocumentMetadataInput,
     EmbeddedChunk,
     IngestResponse,
@@ -89,7 +97,19 @@ class IngestionService:
             logger.info('🚀 Ingestion документа %s (version=%s).', document_id, document_metadata.version)
             embedded_chunks = await self._build_embedded_chunks(document_id, raw_text, category, document_metadata)
 
+            expected_chunk_ids = self._embedded_chunk_ids(embedded_chunks)
+            preexisting_chunk_ids = set(
+                await self.vector_store.get_document_version_chunk_ids(
+                    document_id, document_metadata.version
+                )
+            )
             await self.vector_store.upsert_chunks(embedded_chunks, document_metadata)
+            await self._verify_document_integrity(
+                document_id=document_id,
+                version=document_metadata.version,
+                expected_chunk_ids=expected_chunk_ids,
+                preexisting_chunk_ids=preexisting_chunk_ids,
+            )
             await self._save_document_record(document_id, category, document_metadata)
             not_removed_versions = await self._delete_old_versions(document_id, old_versions)
 
@@ -125,6 +145,12 @@ class IngestionService:
         """
         sections = preprocess_document(document_id, raw_text, category)
         chunks = chunk_document(sections, version=document_metadata.version)
+        self._ensure_unique_chunk_ids(
+            document_id=document_id,
+            version=document_metadata.version,
+            scope='document',
+            chunks=chunks,
+        )
         chunks = [chunk for chunk in chunks if not is_editorial_note_only(chunk.text)]
         if len(chunks) > MAX_CHUNKS_PER_DOCUMENT:
             raise TooManyChunksError(document_id, len(chunks), MAX_CHUNKS_PER_DOCUMENT)
@@ -247,13 +273,30 @@ class IngestionService:
         )
 
         chunks = chunk_document([section], version=request.version)
+        self._ensure_unique_chunk_ids(
+            document_id=document_id,
+            version=request.version,
+            scope=f'parent_id={parent_id}',
+            chunks=chunks,
+        )
         chunks = [chunk for chunk in chunks if not is_editorial_note_only(chunk.text)]
         enriched_chunks = await enrich_chunks(self.llm_client, chunks, document_metadata)
         embedded_chunks = await embed_chunks(
             self.embedding_client, enriched_chunks, get_settings().yandex.embedding_doc_model_uri
         )
 
+        expected_chunk_ids = self._embedded_chunk_ids(embedded_chunks)
+        preexisting_chunk_ids = set(
+            await self.vector_store.get_section_version_chunk_ids(parent_id, request.version)
+        )
         await self.vector_store.upsert_chunks(embedded_chunks, document_metadata)
+        await self._verify_section_integrity(
+            document_id=document_id,
+            parent_id=parent_id,
+            version=request.version,
+            expected_chunk_ids=expected_chunk_ids,
+            preexisting_chunk_ids=preexisting_chunk_ids,
+        )
 
         superseded = await self.vector_store.set_chunks_inactive(
             chunk_ids=old_actual_chunk_ids,
@@ -272,6 +315,95 @@ class IngestionService:
             chunks_count=len(embedded_chunks),
             superseded_chunks=superseded,
         )
+
+    @staticmethod
+    def _embedded_chunk_ids(embedded_chunks: list[EmbeddedChunk]) -> set[str]:
+        return {embedded_chunk.enriched_chunk.chunk.chunk_id for embedded_chunk in embedded_chunks}
+
+    @staticmethod
+    def _ensure_unique_chunk_ids(
+        document_id: str,
+        version: str,
+        scope: str,
+        chunks: list[Chunk],
+    ) -> None:
+        chunk_id_counts = Counter(chunk.chunk_id for chunk in chunks)
+        duplicate_chunk_ids = [chunk_id for chunk_id, count in chunk_id_counts.items() if count > 1]
+        if duplicate_chunk_ids:
+            raise IngestionIntegrityError(
+                document_id=document_id,
+                version=version,
+                scope=scope,
+                expected_count=len(chunks),
+                actual_count=len(chunk_id_counts),
+                duplicate_chunk_ids=duplicate_chunk_ids,
+            )
+
+    async def _verify_document_integrity(
+        self,
+        document_id: str,
+        version: str,
+        expected_chunk_ids: set[str],
+        preexisting_chunk_ids: set[str],
+    ) -> None:
+        actual_count = await self.vector_store.count_actual_document_chunks(document_id, version)
+        actual_chunk_ids = set(await self.vector_store.get_actual_document_chunk_ids(document_id, version))
+        if actual_count == len(expected_chunk_ids) and actual_chunk_ids == expected_chunk_ids:
+            return
+
+        await self._cleanup_new_chunks(expected_chunk_ids, preexisting_chunk_ids)
+        raise IngestionIntegrityError(
+            document_id=document_id,
+            version=version,
+            scope='document',
+            expected_count=len(expected_chunk_ids),
+            actual_count=actual_count,
+            missing_chunk_ids=expected_chunk_ids - actual_chunk_ids,
+            unexpected_chunk_ids=actual_chunk_ids - expected_chunk_ids,
+        )
+
+    async def _verify_section_integrity(
+        self,
+        document_id: str,
+        parent_id: str,
+        version: str,
+        expected_chunk_ids: set[str],
+        preexisting_chunk_ids: set[str],
+    ) -> None:
+        actual_count = await self.vector_store.count_actual_section_chunks(parent_id, version)
+        actual_chunk_ids = set(
+            await self.vector_store.get_actual_section_version_chunk_ids(parent_id, version)
+        )
+        if actual_count == len(expected_chunk_ids) and actual_chunk_ids == expected_chunk_ids:
+            return
+
+        await self._cleanup_new_chunks(expected_chunk_ids, preexisting_chunk_ids)
+        raise IngestionIntegrityError(
+            document_id=document_id,
+            version=version,
+            scope=f'parent_id={parent_id}',
+            expected_count=len(expected_chunk_ids),
+            actual_count=actual_count,
+            missing_chunk_ids=expected_chunk_ids - actual_chunk_ids,
+            unexpected_chunk_ids=actual_chunk_ids - expected_chunk_ids,
+        )
+
+    async def _cleanup_new_chunks(
+        self,
+        expected_chunk_ids: set[str],
+        preexisting_chunk_ids: set[str],
+    ) -> None:
+        new_chunk_ids = sorted(expected_chunk_ids - preexisting_chunk_ids)
+        if not new_chunk_ids:
+            return
+        try:
+            await self.vector_store.delete_chunks(new_chunk_ids)
+        except Exception as error:  # noqa: BLE001 — первичная integrity-ошибка важнее сбоя компенсации
+            logger.exception(
+                '❌ Не удалось удалить %d новых чанков после сбоя integrity-проверки: %s',
+                len(new_chunk_ids),
+                error,
+            )
 
     async def _mark_old_versions_inactive(self, document_id: str, old_versions: list[str]) -> None:
         try:

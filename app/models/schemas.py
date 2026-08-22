@@ -24,6 +24,10 @@ MAX_SUB_QUESTIONS = 3
 MAX_REPHRASINGS_PER_SUB_QUESTION = 1
 
 
+def _canonical_iso_date(value: str) -> str:
+    return date.fromisoformat(value).isoformat()
+
+
 class Chunk(BaseModel):
     """Чанк — единица индексации, результат Этапа 2 (иерархический чанкинг).
 
@@ -127,8 +131,13 @@ class DocumentMetadataInput(BaseModel):
         description='Темы документа (раздел 3 плана) — допустимы только для other_npa/case_law/authorial, '
         'для labor_code/federal_law список должен быть пустым.',
     )
-    version: str = Field(..., description='Дата редакции документа.')
+    version: str = Field(..., description='Дата редакции документа в формате ISO (YYYY-MM-DD).')
     effective_date: date = Field(..., description='Дата вступления редакции в силу.')
+
+    @field_validator('version')
+    @classmethod
+    def canonicalize_version(cls, value: str) -> str:
+        return _canonical_iso_date(value)
 
 
 class SearchFilters(BaseModel):
@@ -254,8 +263,13 @@ class IngestRequest(BaseModel):
         default_factory=list,
         description='Темы документа (раздел 3 плана) — допустимы только для other_npa/case_law/authorial.',
     )
-    version: str = Field(..., description='Дата редакции документа.')
+    version: str = Field(..., description='Дата редакции документа в формате ISO (YYYY-MM-DD).')
     effective_date: date = Field(..., description='Дата вступления редакции в силу.')
+
+    @field_validator('version')
+    @classmethod
+    def canonicalize_version(cls, value: str) -> str:
+        return _canonical_iso_date(value)
 
 
 class IngestResponse(BaseModel):
@@ -283,8 +297,8 @@ class DocumentDeletedResponse(BaseModel):
 
 
 # Категории, поддерживающие гранулярное обновление одной статьи/пункта
-# (Этап 13 плана). case_law и authorial обновляются только целым документом.
-SECTION_UPDATE_ALLOWED_CATEGORIES: frozenset[str] = frozenset({'labor_code', 'federal_law', 'other_npa'})
+# (Этап 13 плана). other_npa, case_law и authorial обновляются только целым документом.
+SECTION_UPDATE_ALLOWED_CATEGORIES: frozenset[str] = frozenset({'labor_code', 'federal_law'})
 
 # Категории, для которых осмысленны темы (раздел 3 плана, обсуждение с
 # пользователем 2026-07-08) — узкие по предмету источники, документ обычно
@@ -311,14 +325,19 @@ class SectionUpdateRequest(BaseModel):
         description='Готовый текст только этой статьи/пункта (не закон-поправка с описанием дельты).',
     )
     section_title: str = Field(..., min_length=1, description='Заголовок статьи/пункта (например, "Отпуска без сохранения заработной платы").')
-    version: str = Field(..., description='Идентификатор редакции (например, дата вступления в силу: "2026-01-01").')
+    version: str = Field(..., description='Дата редакции в формате ISO (YYYY-MM-DD).')
     effective_date: date = Field(..., description='Дата вступления этой редакции в силу.')
     source_title: str = Field(..., description='Человекочитаемое название документа (например, "ТК РФ").')
     audience: Audience = Field(..., description='Целевая аудитория.')
     topics: list[str] = Field(
         default_factory=list,
-        description='Темы (раздел 3 плана) — допустимы только для other_npa (case_law/authorial не поддерживают гранулярное обновление).',
+        description='Темы должны быть пустыми для категорий с гранулярным обновлением.',
     )
+
+    @field_validator('version')
+    @classmethod
+    def canonicalize_version(cls, value: str) -> str:
+        return _canonical_iso_date(value)
 
 
 class SectionUpdateResponse(BaseModel):

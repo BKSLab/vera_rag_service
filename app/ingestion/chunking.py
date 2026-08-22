@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from uuid import NAMESPACE_URL, uuid5
 
 from app.models.schemas import Chunk, Section
@@ -31,6 +32,29 @@ def compute_parent_id(document_id: str, section_number: str | None) -> str:
     if section_number:
         return f'{document_id}:{section_number}'
     return document_id
+
+
+def build_parent_ids(sections: list[Section]) -> list[str]:
+    """Строит parent_id для всех секций одного документа.
+
+    Первое вхождение номера сохраняет адресуемый ``document_id:number``;
+    последующие получают суффикс с номером вхождения. Безномерные секции
+    различаются по ``section_index``.
+    """
+    seen: Counter[str] = Counter()
+    parent_ids: list[str] = []
+
+    for section in sections:
+        if not section.section_number:
+            parent_ids.append(f'{section.document_id}#{section.section_index}')
+            continue
+
+        seen[section.section_number] += 1
+        occurrence = seen[section.section_number]
+        suffix = '' if occurrence == 1 else f'#{occurrence}'
+        parent_ids.append(f'{section.document_id}:{section.section_number}{suffix}')
+
+    return parent_ids
 
 # Оценка токенов по эвристике "1 токен ~ 4 символа русского текста"
 # (RAG_SERVICE_PLAN.md, раздел 3.1) — без подключения токенизатора
@@ -245,8 +269,8 @@ def chunk_document(sections: list[Section], version: str) -> list[Chunk]:
     chunks: list[Chunk] = []
     chunk_index = 0
 
-    for section in sections:
-        parent_id = compute_parent_id(section.document_id, section.section_number)
+    parent_ids = build_parent_ids(sections)
+    for section, parent_id in zip(sections, parent_ids, strict=True):
         for chunk_number_in_section, chunk_text_value in enumerate(chunk_section_text(section.text)):
             chunks.append(
                 Chunk(

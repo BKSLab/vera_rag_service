@@ -183,10 +183,12 @@ def test_extract_npa_sections_does_not_split_on_nested_numbering():
     assert sections[1].section_number == '2'
 
 
-def test_extract_npa_sections_supports_closing_parenthesis_numbering():
+def test_extract_npa_sections_keeps_closing_parenthesis_enumeration_inside_top_level_item():
     text = (
-        '1) Первый пункт.\n'
-        '2) Второй пункт.'
+        '1. Первый пункт верхнего уровня.\n'
+        '1) Первый подпункт.\n'
+        '2) Второй подпункт.\n'
+        '2. Второй пункт верхнего уровня.'
     )
 
     sections = extract_npa_sections(document_id='akt-1', text=text, category='case_law')
@@ -194,6 +196,8 @@ def test_extract_npa_sections_supports_closing_parenthesis_numbering():
     assert len(sections) == 2
     assert sections[0].section_number == '1'
     assert sections[1].section_number == '2'
+    assert '1) Первый подпункт.' in sections[0].text
+    assert '2) Второй подпункт.' in sections[0].text
 
 
 def test_extract_npa_sections_fallback_when_no_paragraphs_found():
