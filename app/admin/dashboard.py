@@ -87,7 +87,13 @@ async def get_dashboard_stats(db_session: AsyncSession, vector_store: QdrantVect
                 ).where(SearchLog.created_at >= recent_window_start)
             )
         ).one()
-    except SQLAlchemyError:
+    # `OSError` — не избыточность рядом с `SQLAlchemyError`: при полностью
+    # недоступном Postgres asyncpg роняет сокет-ошибку (`ConnectionRefusedError`
+    # и родня) на этапе установки соединения, и SQLAlchemy её не заворачивает в
+    # свою иерархию. Без этого перехвата дашборд отдавал 500 вместо страницы с
+    # `postgres_ok=False` — то есть ровно в тот момент, когда сводка о состоянии
+    # сервиса нужнее всего, она и оказывалась недоступна.
+    except (SQLAlchemyError, OSError):
         postgres_ok = False
 
     qdrant_ok = True
