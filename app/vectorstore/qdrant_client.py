@@ -8,7 +8,7 @@ from app.exceptions.vectorstore import QdrantCollectionSchemaError
 from app.ingestion.enrichment import build_index_prefix
 from app.models.metadata import ChunkMetadata
 from app.models.schemas import DocumentMetadataInput, EmbeddedChunk
-from app.vectorstore.sparse import SPARSE_VECTOR_NAME, text_to_sparse_vector
+from app.vectorstore.sparse import SPARSE_VECTOR_NAME, build_sparse_source_title, text_to_sparse_vector
 
 # Гипотетических вопросов на чанк — 3–5 (ChunkEnrichmentResult, Этап 3).
 # Именованные векторы под вопросы заводятся в коллекции с запасом на
@@ -277,8 +277,10 @@ class QdrantVectorStore:
         for embedded_chunk in embedded_chunks:
             chunk = embedded_chunk.enriched_chunk.chunk
             sparse_text = (
-                f'{build_index_prefix(chunk)}\n{document_metadata.source_title}\n{chunk.text}'.strip()
-            )
+                f'{build_index_prefix(chunk)}\n'
+                f'{build_sparse_source_title(document_metadata.source_title)}\n'
+                f'{chunk.text}'
+            ).strip()
 
             vector = {
                 CHUNK_VECTOR_NAME: embedded_chunk.chunk_vector,

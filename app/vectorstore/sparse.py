@@ -36,6 +36,39 @@ _LEGAL_NORMALIZATION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+_MONTHS_GENITIVE = 'января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря'
+_YEAR_SUFFIX = r'(?:\s*(?:года|г\.))?'
+_SOURCE_TITLE_DATE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(rf'\bот\s+\d{{1,2}}\.\d{{1,2}}\.\d{{2,4}}{_YEAR_SUFFIX}', re.IGNORECASE),
+    re.compile(rf'\bот\s+\d{{1,2}}\s+(?:{_MONTHS_GENITIVE})\s+\d{{4}}{_YEAR_SUFFIX}', re.IGNORECASE),
+    re.compile(rf'\b\d{{1,2}}\.\d{{1,2}}\.\d{{2,4}}{_YEAR_SUFFIX}'),
+    re.compile(rf'\b\d{{1,2}}\s+(?:{_MONTHS_GENITIVE})\s+\d{{4}}{_YEAR_SUFFIX}', re.IGNORECASE),
+    re.compile(r'\b(?:19|20)\d{2}\s*(?:года|г\.)', re.IGNORECASE),
+)
+_WHITESPACE_PATTERN = re.compile(r'\s+')
+
+
+def build_sparse_source_title(source_title: str) -> str:
+    """Обозначение документа для sparse-индекса — без даты принятия.
+
+    `source_title` подмешивается в sparse-текст каждого чанка (см.
+    `qdrant_client.upsert_chunks`), чтобы номер нормы связывался с документом:
+    иначе sparse-лента не отличит статью 21 ТК РФ от статьи 21 ФЗ-181. Но
+    полное официальное название несёт ещё и дату принятия, а её цифры — редкие
+    токены, которые IDF не обесценивает: из-за них запрос «статья 24» получал
+    слабое совпадение с КАЖДЫМ чанком закона от 24.11.1995 просто потому, что
+    число 24 есть в его названии.
+
+    Номер самого документа (`№ 181-ФЗ`) остаётся — он и есть различающий
+    признак. В payload (`build_chunk_payload`) название по-прежнему лежит
+    целиком: оно показывается пользователю и нужно для ссылки на источник.
+    """
+    normalized = source_title
+    for pattern in _SOURCE_TITLE_DATE_PATTERNS:
+        normalized = pattern.sub(' ', normalized)
+    return _WHITESPACE_PATTERN.sub(' ', normalized).strip()
+
+
 def normalize_sparse_text(text: str) -> str:
     """Нормализует частые русские юридические формы перед sparse-токенизацией."""
     normalized = text.lower().replace('ё', 'е')

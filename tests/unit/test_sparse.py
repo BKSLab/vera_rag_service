@@ -1,7 +1,7 @@
 import pytest
 
 from app.core.settings import SearchSettings
-from app.vectorstore.sparse import text_to_sparse_vector, tokenize
+from app.vectorstore.sparse import build_sparse_source_title, text_to_sparse_vector, tokenize
 
 
 def test_tokenize_lowercases_and_splits_on_word_boundaries():
@@ -105,3 +105,38 @@ def test_text_to_sparse_vector_is_deterministic_for_same_text():
 
     assert first.indices == second.indices
     assert first.values == second.values
+
+
+@pytest.mark.parametrize(
+    ('source_title', 'expected'),
+    [
+        (
+            'Федеральный закон от 24.11.1995 № 181-ФЗ "О социальной защите инвалидов в РФ"',
+            'Федеральный закон № 181-ФЗ "О социальной защите инвалидов в РФ"',
+        ),
+        (
+            'Трудовой кодекс Российской Федерации от 30.12.2001 № 197-ФЗ',
+            'Трудовой кодекс Российской Федерации № 197-ФЗ',
+        ),
+        (
+            'Постановление Пленума Верховного Суда РФ от 17 марта 2004 года № 2',
+            'Постановление Пленума Верховного Суда РФ № 2',
+        ),
+        ('ТК РФ', 'ТК РФ'),
+    ],
+)
+def test_build_sparse_source_title_drops_date_and_keeps_document_number(source_title: str, expected: str):
+    assert build_sparse_source_title(source_title) == expected
+
+
+def test_build_sparse_source_title_removes_date_digits_from_tokens():
+    """Цифры даты — редкие токены, IDF их не гасит: без вырезания запрос
+    «статья 24» слабо матчил каждый чанк закона от 24.11.1995."""
+    tokens = tokenize(
+        build_sparse_source_title('Федеральный закон от 24.11.1995 № 181-ФЗ "О социальной защите инвалидов"')
+    )
+
+    assert '24' not in tokens
+    assert '11' not in tokens
+    assert '1995' not in tokens
+    assert '181' in tokens
