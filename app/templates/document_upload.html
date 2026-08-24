@@ -44,8 +44,16 @@
           </div>
         </div>
         <div class="mb-3">
-          <label class="form-label">Название источника</label>
-          <input type="text" name="source_title" class="form-control" placeholder="ФЗ-181, Статья 21" required>
+          <label class="form-label">Полное наименование документа</label>
+          <div class="form-hint">
+            Заполняется в полном соответствии с документом: вид акта, дата принятия, номер и официальное название.
+            Эта строка возвращается в ответе поиска и уходит пользователю как ссылка на источник — сокращения
+            («ФЗ-181», «ТК РФ») и приблизительные формулировки недопустимы.
+          </div>
+          <input
+            type="text" name="source_title" class="form-control" required
+            placeholder='Федеральный закон от 24.11.1995 № 181-ФЗ "О социальной защите инвалидов в Российской Федерации"'
+          >
         </div>
         <div class="row">
           <div class="col-md-6 mb-3">

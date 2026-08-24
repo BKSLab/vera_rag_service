@@ -124,7 +124,14 @@ class DocumentMetadataInput(BaseModel):
     а не отдельного чанка, и они одинаковы для всех чанков документа.
     """
 
-    source_title: str = Field(..., description='Человекочитаемое название источника.')
+    source_title: str = Field(
+        ...,
+        description=(
+            'Полное официальное наименование документа: вид акта, дата принятия, номер и название. '
+            'Возвращается потребителю как ссылка на источник, поэтому должно точно соответствовать документу.'
+        ),
+        examples=['Федеральный закон от 24.11.1995 № 181-ФЗ "О социальной защите инвалидов в Российской Федерации"'],
+    )
     audience: Audience = Field(..., description='Целевая аудитория.')
     topics: list[str] = Field(
         default_factory=list,
@@ -159,7 +166,14 @@ class SearchResultChunk(BaseModel):
     chunk_id: str = Field(..., description='Идентификатор чанка.')
     text: str = Field(..., description='Текст чанка.')
     synthetic_title: str = Field(..., description='Синтетический заголовок чанка.')
-    source_title: str = Field(..., description='Человекочитаемое название источника.')
+    source_title: str = Field(
+        ...,
+        description=(
+            'Полное официальное наименование документа: вид акта, дата принятия, номер и название. '
+            'Возвращается потребителю как ссылка на источник, поэтому должно точно соответствовать документу.'
+        ),
+        examples=['Федеральный закон от 24.11.1995 № 181-ФЗ "О социальной защите инвалидов в Российской Федерации"'],
+    )
     audience: Audience = Field(..., description='Целевая аудитория чанка.')
     topics: list[str] = Field(default_factory=list, description='Темы чанка (раздел 3 плана) — пусто для labor_code/federal_law.')
     category: Category = Field(
@@ -257,7 +271,14 @@ class IngestRequest(BaseModel):
         ..., min_length=1, max_length=MAX_RAW_TEXT_LENGTH,
         description='Исходный текст документа (PDF/MD/TXT уже декодированы в строку).',
     )
-    source_title: str = Field(..., description='Человекочитаемое название источника.')
+    source_title: str = Field(
+        ...,
+        description=(
+            'Полное официальное наименование документа: вид акта, дата принятия, номер и название. '
+            'Возвращается потребителю как ссылка на источник, поэтому должно точно соответствовать документу.'
+        ),
+        examples=['Федеральный закон от 24.11.1995 № 181-ФЗ "О социальной защите инвалидов в Российской Федерации"'],
+    )
     audience: Audience = Field(..., description='Целевая аудитория.')
     topics: list[str] = Field(
         default_factory=list,
@@ -327,7 +348,14 @@ class SectionUpdateRequest(BaseModel):
     section_title: str = Field(..., min_length=1, description='Заголовок статьи/пункта (например, "Отпуска без сохранения заработной платы").')
     version: str = Field(..., description='Дата редакции в формате ISO (YYYY-MM-DD).')
     effective_date: date = Field(..., description='Дата вступления этой редакции в силу.')
-    source_title: str = Field(..., description='Человекочитаемое название документа (например, "ТК РФ").')
+    source_title: str = Field(
+        ...,
+        description=(
+            'Полное официальное наименование документа: вид акта, дата принятия, номер и название. '
+            'Возвращается потребителю как ссылка на источник, поэтому должно точно соответствовать документу.'
+        ),
+        examples=['Трудовой кодекс Российской Федерации от 30.12.2001 № 197-ФЗ'],
+    )
     audience: Audience = Field(..., description='Целевая аудитория.')
     topics: list[str] = Field(
         default_factory=list,

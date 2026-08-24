@@ -27,7 +27,10 @@ class ChunkMetadata(BaseModel):
         ..., description='Единица обновления/удаления: f"{document_id}:{section_number}" или просто document_id (Этап 13 плана).',
     )
     category: Category = Field(..., description='Категория источника (раздел 3, Этап 5.1 плана).')
-    source_title: str = Field(..., description='Человекочитаемое название источника.', examples=['ФЗ-181, Статья 21'])
+    source_title: str = Field(
+        ..., description='Полное официальное наименование документа: вид акта, дата принятия, номер и название.',
+        examples=['Федеральный закон от 24.11.1995 № 181-ФЗ "О социальной защите инвалидов в Российской Федерации"'],
+    )
     audience: Audience = Field(..., description='Целевая аудитория чанка.')
     topics: list[str] = Field(
         default_factory=list, description='Темы чанка (раздел 3 плана) — пусто для labor_code/federal_law.',

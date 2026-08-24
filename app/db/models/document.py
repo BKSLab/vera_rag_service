@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,7 +28,7 @@ class Document(Base):
     document_id: Mapped[str] = mapped_column(String(length=255), nullable=False, index=True, comment='Идентификатор документа-источника.')
     version: Mapped[str] = mapped_column(String(length=20), nullable=False, comment='Версия документа, под которой проиндексирован.')
     category: Mapped[str] = mapped_column(String(length=20), nullable=False, comment='Категория источника (раздел 3 плана).')
-    source_title: Mapped[str] = mapped_column(String(length=255), nullable=False, comment='Человекочитаемое название источника.')
+    source_title: Mapped[str] = mapped_column(Text, nullable=False, comment='Полное официальное наименование документа: вид акта, дата, номер и название.')
     audience: Mapped[str] = mapped_column(String(length=20), nullable=False, comment='Целевая аудитория документа.')
     topics: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, comment='Темы документа (раздел 3 плана) — пусто для labor_code/federal_law.',
