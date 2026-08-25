@@ -1,14 +1,32 @@
 import pytest
 import pytest_asyncio
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
+from app.core.settings import get_settings
 from app.db.models.base import Base
 from app.observability.tracing import reset_for_tests
 
 _trace_exporter = InMemorySpanExporter()
 reset_for_tests(_trace_exporter)
+
+
+def make_test_qdrant_client() -> AsyncQdrantClient:
+    """Клиент к локальному Qdrant из docker-compose для интеграционных тестов.
+
+    Собирается здесь, а не в каждой фикстуре отдельно: `docker-compose.yml`
+    поднимает Qdrant с `QDRANT__SERVICE__API_KEY`, и клиент без `api_key`
+    получает 401 на любом запросе. Ровно так же (и по той же причине) ключ
+    передаётся боевому клиенту в `app/vectorstore/client.py` — дублирование
+    этой логики по фикстурам и привело к тому, что её забыли.
+    """
+    settings = get_settings().qdrant
+    return AsyncQdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
+    )
 
 
 @pytest.fixture

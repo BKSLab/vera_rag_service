@@ -2,12 +2,11 @@ from datetime import date
 from uuid import uuid4
 
 import pytest_asyncio
-from qdrant_client import AsyncQdrantClient
 
-from app.core.settings import get_settings
 from app.models.schemas import Chunk, DocumentMetadataInput, EmbeddedChunk, EnrichedChunk, SearchFilters
 from app.search.hybrid import DENSE_TOP_K, dense_search, get_candidate_chunk_ids, hybrid_search, sparse_search
 from app.vectorstore.qdrant_client import QdrantVectorStore
+from tests.conftest import make_test_qdrant_client
 
 VECTOR_DIM = 4
 
@@ -15,8 +14,7 @@ VECTOR_DIM = 4
 @pytest_asyncio.fixture
 async def populated_store():
     """Коллекция на реальном локальном Qdrant с тремя чанками разной аудитории/текста."""
-    settings = get_settings().qdrant
-    client = AsyncQdrantClient(url=settings.qdrant_url)
+    client = make_test_qdrant_client()
     collection_name = f'test_{uuid4().hex}'
     store = QdrantVectorStore(client=client, collection_name=collection_name, vector_dim=VECTOR_DIM)
     await store.ensure_collection()
@@ -124,8 +122,7 @@ async def imbalanced_category_store():
     запросом, а `case_law` — один чанк с заметно более низким cosine-score.
     Воспроизводит риск из раздела 4 плана: при плоском top-K `case_law`
     оказался бы за пределами DENSE_TOP_K и не дошёл бы до reranker'а."""
-    settings = get_settings().qdrant
-    client = AsyncQdrantClient(url=settings.qdrant_url)
+    client = make_test_qdrant_client()
     collection_name = f'test_{uuid4().hex}'
     store = QdrantVectorStore(client=client, collection_name=collection_name, vector_dim=VECTOR_DIM)
     await store.ensure_collection()
@@ -199,8 +196,7 @@ async def test_hybrid_search_balances_candidates_across_categories(imbalanced_ca
 async def question_vector_store():
     """Коллекция, где целевой чанк плохо совпадает основным `chunk`-вектором,
     но идеально совпадает вектором гипотетического вопроса `question_0`."""
-    settings = get_settings().qdrant
-    client = AsyncQdrantClient(url=settings.qdrant_url)
+    client = make_test_qdrant_client()
     collection_name = f'test_{uuid4().hex}'
     store = QdrantVectorStore(client=client, collection_name=collection_name, vector_dim=VECTOR_DIM)
     await store.ensure_collection()

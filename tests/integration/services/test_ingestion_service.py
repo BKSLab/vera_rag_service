@@ -5,19 +5,18 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from qdrant_client import AsyncQdrantClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
-from app.core.settings import get_settings
 from app.db.models.document import Document
 from app.exceptions.ingestion import TopicsNotAllowedForCategoryError
 from app.models.schemas import ChunkEnrichmentResult, DocumentMetadataInput, SectionUpdateRequest
 from app.repositories.document import DocumentRepository
 from app.services.ingestion import IngestionService
 from app.vectorstore.qdrant_client import QdrantVectorStore
+from tests.conftest import make_test_qdrant_client
 
 VECTOR_DIM = 4
 
@@ -25,8 +24,7 @@ VECTOR_DIM = 4
 @pytest_asyncio.fixture
 async def vector_store():
     """Тестовая коллекция на реальном локальном Qdrant (docker-compose), с очисткой после теста."""
-    settings = get_settings().qdrant
-    client = AsyncQdrantClient(url=settings.qdrant_url)
+    client = make_test_qdrant_client()
     collection_name = f'test_{uuid4().hex}'
     store = QdrantVectorStore(client=client, collection_name=collection_name, vector_dim=VECTOR_DIM)
     await store.ensure_collection()

@@ -2,21 +2,19 @@ from datetime import date
 from uuid import uuid4
 
 import pytest_asyncio
-from qdrant_client import AsyncQdrantClient
 
 from app.admin.reconciliation import find_active_documents_missing_in_qdrant
-from app.core.settings import get_settings
 from app.db.models.document import Document
 from app.models.schemas import Chunk, DocumentMetadataInput, EmbeddedChunk, EnrichedChunk
 from app.vectorstore.qdrant_client import QdrantVectorStore
+from tests.conftest import make_test_qdrant_client
 
 VECTOR_DIM = 4
 
 
 @pytest_asyncio.fixture
 async def vector_store():
-    settings = get_settings().qdrant
-    client = AsyncQdrantClient(url=settings.qdrant_url)
+    client = make_test_qdrant_client()
     collection_name = f'test_{uuid4().hex}'
     store = QdrantVectorStore(client=client, collection_name=collection_name, vector_dim=VECTOR_DIM)
     await store.ensure_collection()

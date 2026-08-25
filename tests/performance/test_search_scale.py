@@ -4,12 +4,11 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from qdrant_client import AsyncQdrantClient
 
-from app.core.settings import get_settings
 from app.models.schemas import Chunk, DocumentMetadataInput, EmbeddedChunk, EnrichedChunk
 from app.search.hybrid import dense_search, sparse_search
 from app.vectorstore.qdrant_client import QdrantVectorStore
+from tests.conftest import make_test_qdrant_client
 
 # TEST-3 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — регрессионный
 # тест именно на находку SEARCH-1/QD-3: раньше `sparse_search` выгружала
@@ -38,8 +37,7 @@ def make_embedded_chunk(index: int) -> EmbeddedChunk:
 
 @pytest_asyncio.fixture
 async def large_corpus_store():
-    settings = get_settings().qdrant
-    client = AsyncQdrantClient(url=settings.qdrant_url)
+    client = make_test_qdrant_client()
     collection_name = f'test_perf_{uuid4().hex}'
     store = QdrantVectorStore(client=client, collection_name=collection_name, vector_dim=VECTOR_DIM)
     await store.ensure_collection()
