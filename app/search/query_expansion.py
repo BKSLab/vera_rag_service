@@ -17,20 +17,16 @@ class QueryExpansionOutcome:
 
 def _flatten_variants(result: QueryExpansionResult, original_query: str) -> list[str]:
     """Разворачивает подвопросы и их переформулировки в плоский список
-    текстов запроса, без дублей, с сохранением порядка появления.
-
-    Падение к исходному запросу, если LLM вернул только пустые строки
-    (теоретически возможно после `cap_rephrasings`/`cap_variants`, хотя
-    схема запрещает пустой `variants`/`sub_question`).
+    текстов запроса, начиная с исходного запроса и сохраняя порядок без
+    дублей.
     """
-    queries = [
+    model_queries = [
         text
         for variant in result.variants
         for text in (variant.sub_question, *variant.rephrasings)
         if text.strip()
     ]
-    deduped = list(dict.fromkeys(queries))
-    return deduped or [original_query]
+    return list(dict.fromkeys([original_query, *model_queries]))
 
 
 async def expand_query_with_status(llm_client: LlmClient, query_text: str) -> QueryExpansionOutcome:

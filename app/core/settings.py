@@ -141,13 +141,14 @@ class PolzaSettings(SettingsBase):
     """
 
     polza_api_key: SecretStr = SecretStr('PLACEHOLDER_POLZA_API_KEY')
-    # Выбор модели (Lite vs Pro vs другие кандидаты) — открытый вопрос,
-    # раздел 8 плана: `google/gemini-3.1-flash` (без `-lite`) не существует
-    # в каталоге Polza, временно возвращено рабочее значение до
-    # сравнительного теста на наших данных.
-    polza_enrichment_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
-    polza_reranker_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
-    polza_query_expansion_llm_model: str = 'google/gemini-3.1-flash-lite-preview'
+    # Стабильная Flash-Lite-модель для коротких structured-output задач
+    # query expansion/reranking и offline-обогащения (раздел 10.3 плана).
+    polza_enrichment_llm_model: str = 'google/gemini-3.5-flash-lite'
+    polza_reranker_llm_model: str = 'google/gemini-3.5-flash-lite'
+    polza_query_expansion_llm_model: str = 'google/gemini-3.5-flash-lite'
+    polza_enrichment_llm_temperature: float = 0.3
+    polza_reranker_llm_temperature: float = 0.0
+    polza_query_expansion_llm_temperature: float = 0.0
     polza_enrichment_timeout_seconds: int = 90
     polza_enrichment_retries: int = 3
     polza_query_expansion_timeout_seconds: int = 12
@@ -160,9 +161,10 @@ class PolzaSettings(SettingsBase):
     пользователя, не кандидаты-чанки) — может со временем разойтись по
     модели с reranker'ом.
 
-    Timeout/retry тоже разделены по use-case: enrichment — offline ingestion
-    и может ждать дольше; query expansion/reranker — hot path `/search`,
-    поэтому при деградации LLM должны быстро уйти в fallback.
+    Temperature и timeout/retry тоже разделены по use-case: enrichment —
+    offline ingestion с temperature=0.3; query expansion/reranker — hot path
+    `/search` с temperature=0 для стабильных вариантов и отбора кандидатов.
+    При деградации LLM hot-path компоненты должны быстро уйти в fallback.
     """
     polza_llm_api_url: str = 'https://polza.ai/api/v1/chat/completions'
 

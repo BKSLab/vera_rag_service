@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 from app.clients.llm import LlmClient
 from app.exceptions.llm import LlmApiRequestError
 from app.models.schemas import QueryExpansionResult, QueryVariant
+from app.search.prompts.query_expansion import QUERY_EXPANSION_PROMPT
 from app.search.query_expansion import expand_query, expand_query_with_status
 
 
@@ -53,13 +54,34 @@ async def test_expand_query_decomposes_compound_question_into_sub_questions():
     result = await expand_query(llm_client, 'сколько дней отпуск у инвалида и как оформить квоту')
 
     assert result == [
+        'сколько дней отпуск у инвалида и как оформить квоту',
         'сколько дней отпуск у инвалида',
         'продолжительность отпуска инвалида',
         'как оформить квоту',
     ]
 
 
-async def test_expand_query_dedupes_repeated_texts():
+async def test_expand_query_keeps_original_first_when_llm_omits_it():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = QueryExpansionResult(
+        variants=[
+            QueryVariant(
+                sub_question='увольнение по инициативе работодателя',
+                rephrasings=['основания увольнения работника'],
+            )
+        ]
+    )
+
+    result = await expand_query(llm_client, 'п. 2 ч. 1 ст. 81 ТК РФ')
+
+    assert result == [
+        'п. 2 ч. 1 ст. 81 ТК РФ',
+        'увольнение по инициативе работодателя',
+        'основания увольнения работника',
+    ]
+
+
+async def test_expand_query_dedupes_original_and_repeated_model_texts():
     llm_client = AsyncMock(spec=LlmClient)
     llm_client.get_llm_response.return_value = QueryExpansionResult(
         variants=[QueryVariant(sub_question='вопрос', rephrasings=['вопрос'])]
@@ -83,3 +105,32 @@ def test_query_expansion_result_caps_variants_and_rephrasings_above_limit():
 
     assert len(result.variants) == 3
     assert all(len(variant.rephrasings) == 1 for variant in result.variants)
+
+
+def test_query_expansion_prompt_preserves_reference_only_query_verbatim():
+    lowered = QUERY_EXPANSION_PROMPT.lower()
+
+    assert 'приоритетное правило для запроса, состоящего только из одной ссылки' in lowered
+    assert 'символ в символ повторять исходную ссылку' in lowered
+    assert '"rephrasings" должен быть пустым списком' in lowered
+    assert 'не расшифровывай содержание нормы' in lowered
+    assert 'п. 2 ч. 1 ст. 81 тк рф' in lowered
+    assert 'статья 21 федерального закона от 24.11.1995 № 181-фз' in lowered
+
+
+def test_query_expansion_prompt_preserves_reference_inside_question():
+    lowered = QUERY_EXPANSION_PROMPT.lower()
+
+    assert 'если ссылка на норму является частью содержательного вопроса' in lowered
+    assert 'сохрани весь исходный вопрос без изменений в "sub_question"' in lowered
+    assert 'дословно сохранять все реквизиты ссылки' in lowered
+    assert 'не заменяй ссылку её предполагаемым содержанием' in lowered
+    assert 'не добавляй ответ на вопрос до поиска' in lowered
+
+
+def test_query_expansion_prompt_forbids_new_user_facts():
+    lowered = QUERY_EXPANSION_PROMPT.lower()
+
+    assert 'не добавляет новых фактов, ролей, обстоятельств' in lowered
+    assert 'не означает, что пользователь является инвалидом' in lowered
+    assert 'только сведения, прямо присутствующие в <user_query>' in lowered
