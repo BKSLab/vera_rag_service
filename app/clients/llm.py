@@ -28,10 +28,12 @@ PydanticModel = TypeVar('PydanticModel', bound=BaseModel)
 # модели, а не часть содержания.
 _JSON_MARKDOWN_EMPHASIS_PATTERN = re.compile(r'(?<=")[_*]+|[_*]+(?=")')
 
-# Модель почти всегда оборачивает JSON-ответ в markdown code fence (```json
-# ... ``` или просто ``` ... ```) несмотря на просьбу не делать этого —
-# снимаем обёртку перед парсингом, а не полагаемся на соблюдение промпта.
-_MARKDOWN_CODE_FENCE_PATTERN = re.compile(r'^```[a-zA-Z]*\n?|```\s*$')
+# LLM разных провайдеров могут оборачивать structured output в markdown code
+# fence (```json ... ``` или просто ``` ... ```) несмотря на просьбу вернуть
+# чистый JSON. Внешняя оболочка не является частью JSON, поэтому безопасно
+# снимается перед schema-валидацией для всех провайдеров. В отличие от
+# Yandex-специфичной правки эмфазиса выше, содержимое JSON не изменяется.
+_MARKDOWN_CODE_FENCE_PATTERN = re.compile(r'^```[a-zA-Z]*\r?\n?|```\s*$')
 
 
 def _strip_json_markdown_emphasis(content: str) -> str:
@@ -90,16 +92,12 @@ class LlmClient:
             max_delay: Верхняя граница задержки между повторами.
             extra_payload: Провайдер-специфичные поля, добавляемые в payload
                 каждого запроса. None — без расширений.
-            strip_markdown_artifacts: Снимать markdown code fence/эмфазис
-                перед валидацией по схеме (LLM-1,
-                AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — эмпирически
-                подобранные обходные пути под капризы конкретно YandexGPT
-                (`yandexgpt/rc`), не общее свойство контракта Chat
-                Completions. По умолчанию `False`, чтобы не применять их
-                "вслепую" к ответам других провайдеров (например, Gemini
-                через Polza, используемый для reranker'а) — там эти же
-                трансформации могли бы незаметно повредить легитимный
-                контент, случайно содержащий `_`/`*` рядом с кавычкой.
+            strip_markdown_artifacts: Снимать Yandex-специфичный markdown-
+                эмфазис перед валидацией по схеме (LLM-1,
+                AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md). По умолчанию
+                `False`, чтобы не изменять легитимные `_`/`*` в ответах других
+                провайдеров. Внешний JSON code fence снимается для всех
+                провайдеров независимо от этого флага.
             circuit_breaker: Общий на провайдера+use-case breaker (LLM-2,
                 AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — module-level
                 singleton, переживающий конкретный HTTP-запрос (в отличие от
@@ -183,9 +181,9 @@ class LlmClient:
         Raises:
             LlmClientContentError: Если контент не прошёл валидацию схемы.
         """
-        content = self._extract_content(response)
+        content = _strip_markdown_code_fence(self._extract_content(response))
         if self.strip_markdown_artifacts:
-            content = _strip_json_markdown_emphasis(_strip_markdown_code_fence(content))
+            content = _strip_json_markdown_emphasis(content)
         try:
             return schema.model_validate_json(content)
         except ValidationError as error:

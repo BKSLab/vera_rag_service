@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.clients.llm import LlmClient
 from app.core.circuit_breaker import CircuitBreaker
 from app.exceptions.llm import LlmApiRequestError
+from app.models.schemas import RerankResult
 
 
 class _EchoSchema(BaseModel):
@@ -133,20 +134,39 @@ async def test_get_llm_response_raises_on_empty_content():
         await client.get_llm_response(content='вопрос', prompt='system')
 
 
-async def test_get_llm_response_strips_markdown_code_fence_before_validation():
-    """Регрессия: YandexGPT почти всегда оборачивает JSON-ответ в ```...```
-    (см. RAG_SERVICE_PLAN.md, Этап 3) — клиент должен снимать обёртку,
-    когда `strip_markdown_artifacts=True` (LLM-1 — включается только для
-    Yandex-клиента через DI, не для других провайдеров по умолчанию)."""
+@pytest.mark.parametrize('fence_language', ['', 'json'])
+async def test_get_llm_response_strips_markdown_code_fence_before_validation(
+    fence_language,
+):
+    """Внешняя fence-оболочка structured output снимается для любого LLM."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return _chat_completion_response('```json\n{"answer": "да"}\n```')
+        return _chat_completion_response(
+            f'```{fence_language}\n{{"answer": "да"}}\n```'
+        )
 
-    client = _make_client(handler, strip_markdown_artifacts=True)
+    client = _make_client(handler)
 
     result = await client.get_llm_response(content='вопрос', prompt='system', schema=_EchoSchema)
 
     assert result.answer == 'да'
+
+
+async def test_get_llm_response_accepts_gemini_fenced_rerank_result_by_default():
+    """Регрессия N-01: Gemini через Polza оборачивает RerankResult в fence."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _chat_completion_response(
+            '```json\n{"ranked_indices": [11, 51]}\n```'
+        )
+
+    client = _make_client(handler)
+
+    result = await client.get_llm_response(
+        content='кандидаты', prompt='system', schema=RerankResult
+    )
+
+    assert result.ranked_indices == [11, 51]
 
 
 async def test_get_llm_response_strips_markdown_emphasis_underscores_before_validation():
@@ -163,19 +183,17 @@ async def test_get_llm_response_strips_markdown_emphasis_underscores_before_vali
     assert result.answer == 'да, можно'
 
 
-async def test_get_llm_response_does_not_strip_markdown_artifacts_by_default():
-    """LLM-1 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — без явного
-    `strip_markdown_artifacts=True` контент других провайдеров (например,
-    Gemini через Polza, используемый для reranker'а) не должен незаметно
-    портиться эмпирическими правками под капризы конкретно YandexGPT."""
+async def test_get_llm_response_does_not_strip_markdown_emphasis_by_default():
+    """Без opt-in клиент не меняет легитимный эмфазис внутри JSON-строк."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return _chat_completion_response('```json\n{"answer": "да"}\n```')
+        return _chat_completion_response('{"answer": "_да_"}')
 
     client = _make_client(handler)
 
-    with pytest.raises(LlmApiRequestError):
-        await client.get_llm_response(content='вопрос', prompt='system', schema=_EchoSchema)
+    result = await client.get_llm_response(content='вопрос', prompt='system', schema=_EchoSchema)
+
+    assert result.answer == '_да_'
 
 
 async def test_get_llm_response_fails_fast_when_circuit_breaker_open():
