@@ -222,3 +222,6 @@ __marimo__/
 # Runbook диагностики прода — содержит адреса и параметры подключения
 # к боевой инфраструктуре. В репозитории не нужен.
 PROD_DIAGNOSTICS_RUNBOOK.md
+
+# Локальный read-only клиент production Postgres.
+scripts/prod_db_query.py
