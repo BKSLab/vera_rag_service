@@ -26,7 +26,15 @@ def _flatten_variants(result: QueryExpansionResult, original_query: str) -> list
         for text in (variant.sub_question, *variant.rephrasings)
         if text.strip()
     ]
-    return list(dict.fromkeys([original_query, *model_queries]))
+    queries: list[str] = []
+    seen: set[str] = set()
+    for query in (original_query, *model_queries):
+        key = ' '.join(query.split()).casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        queries.append(query)
+    return queries
 
 
 async def expand_query_with_status(llm_client: LlmClient, query_text: str) -> QueryExpansionOutcome:

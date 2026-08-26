@@ -92,6 +92,23 @@ async def test_expand_query_dedupes_original_and_repeated_model_texts():
     assert result == ['вопрос']
 
 
+async def test_expand_query_dedupes_case_and_whitespace_variants_preserving_first_text():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = QueryExpansionResult(
+        variants=[
+            QueryVariant(
+                sub_question='статья 21 федерального закона от 24.11.1995 № 181-фз',
+                rephrasings=['СТАТЬЯ   21 ФЕДЕРАЛЬНОГО ЗАКОНА ОТ 24.11.1995 № 181-ФЗ'],
+            )
+        ]
+    )
+    original = 'Статья 21 Федерального закона от 24.11.1995 № 181-ФЗ'
+
+    result = await expand_query(llm_client, original)
+
+    assert result == [original]
+
+
 def test_query_expansion_result_caps_variants_and_rephrasings_above_limit():
     """Расширение запроса ограничено MAX_SUB_QUESTIONS×MAX_REPHRASINGS_PER_SUB_QUESTION
     (раздел 8 плана) — LLM, вернувший больше, не должен взорвать веер
@@ -134,3 +151,12 @@ def test_query_expansion_prompt_forbids_new_user_facts():
     assert 'не добавляет новых фактов, ролей, обстоятельств' in lowered
     assert 'не означает, что пользователь является инвалидом' in lowered
     assert 'только сведения, прямо присутствующие в <user_query>' in lowered
+
+
+def test_query_expansion_prompt_preserves_yes_no_uncertainty():
+    lowered = QUERY_EXPANSION_PROMPT.lower()
+
+    assert 'сохраняй неопределённость' in lowered
+    assert 'не превращай вопрос о возможности в утверждение о наличии запрета' in lowered
+    assert 'правовое регулирование увольнения в период временной нетрудоспособности' in lowered
+    assert 'недопустимо `запрет на увольнение работника' in lowered
