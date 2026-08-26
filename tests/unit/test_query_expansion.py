@@ -54,13 +54,34 @@ async def test_expand_query_decomposes_compound_question_into_sub_questions():
     result = await expand_query(llm_client, 'сколько дней отпуск у инвалида и как оформить квоту')
 
     assert result == [
+        'сколько дней отпуск у инвалида и как оформить квоту',
         'сколько дней отпуск у инвалида',
         'продолжительность отпуска инвалида',
         'как оформить квоту',
     ]
 
 
-async def test_expand_query_dedupes_repeated_texts():
+async def test_expand_query_keeps_original_first_when_llm_omits_it():
+    llm_client = AsyncMock(spec=LlmClient)
+    llm_client.get_llm_response.return_value = QueryExpansionResult(
+        variants=[
+            QueryVariant(
+                sub_question='увольнение по инициативе работодателя',
+                rephrasings=['основания увольнения работника'],
+            )
+        ]
+    )
+
+    result = await expand_query(llm_client, 'п. 2 ч. 1 ст. 81 ТК РФ')
+
+    assert result == [
+        'п. 2 ч. 1 ст. 81 ТК РФ',
+        'увольнение по инициативе работодателя',
+        'основания увольнения работника',
+    ]
+
+
+async def test_expand_query_dedupes_original_and_repeated_model_texts():
     llm_client = AsyncMock(spec=LlmClient)
     llm_client.get_llm_response.return_value = QueryExpansionResult(
         variants=[QueryVariant(sub_question='вопрос', rephrasings=['вопрос'])]
