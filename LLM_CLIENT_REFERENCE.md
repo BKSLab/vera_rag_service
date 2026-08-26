@@ -116,7 +116,7 @@ class LlmClient:
         model: str,
         url: str,
         headers: dict,
-        temperature: float = 0.3,
+        temperature: float | None = None,
         stream: bool = False,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
         retries: int = DEFAULT_RETRIES,
@@ -132,7 +132,8 @@ class LlmClient:
             model: Имя модели по умолчанию для запросов.
             url: URL эндпоинта Chat Completions провайдера.
             headers: Заголовки запроса (Authorization, Content-Type и т.п.).
-            temperature: Температура генерации по умолчанию.
+            temperature: Температура генерации. None оставляет выбор
+                значения провайдеру и не добавляет поле в payload.
             stream: Признак потокового ответа.
             timeout: Таймаут одного HTTP-запроса в секундах.
             retries: Максимальное количество попыток на один вызов.
@@ -316,10 +317,11 @@ class LlmClient:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content},
             ],
-            "temperature": self.temperature,
             "max_completion_tokens": max_completion_tokens,
             "stream": self.stream,
         }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
         if schema:
             payload["response_format"] = {"type": "json_object"}
         if self.extra_payload:

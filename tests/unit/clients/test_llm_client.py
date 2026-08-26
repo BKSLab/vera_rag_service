@@ -45,6 +45,35 @@ async def test_get_llm_response_returns_content_without_schema():
     assert result == 'Привет'
 
 
+async def test_get_llm_response_omits_temperature_from_payload():
+    captured_payload: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payload.update(json.loads(request.content))
+        return _chat_completion_response('Привет')
+
+    client = _make_client(handler)
+
+    await client.get_llm_response(content='вопрос', prompt='system')
+
+    assert 'temperature' not in captured_payload
+
+
+@pytest.mark.parametrize('temperature', [0.0, 0.3])
+async def test_get_llm_response_includes_configured_temperature_in_payload(temperature):
+    captured_payload: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payload.update(json.loads(request.content))
+        return _chat_completion_response('Привет')
+
+    client = _make_client(handler, temperature=temperature)
+
+    await client.get_llm_response(content='вопрос', prompt='system')
+
+    assert captured_payload['temperature'] == temperature
+
+
 async def test_get_llm_response_returns_validated_schema():
     def handler(request: httpx.Request) -> httpx.Response:
         return _chat_completion_response(json.dumps({'answer': 'да'}))
