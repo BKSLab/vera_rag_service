@@ -5,9 +5,11 @@ from sqladmin import Admin
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.admin.auth import AdminLoginAuth
+from app.admin.ingestion import IngestionLogView, IngestionRunView
 from app.admin.views import (
     DashboardView,
     DocumentAdmin,
+    DocumentChangeLogAdmin,
     DocumentChunksView,
     DocumentUploadView,
     SearchLogAdmin,
@@ -38,6 +40,9 @@ def create_admin(app: FastAPI, engine: AsyncEngine) -> Admin:
         templates_dir=_TEMPLATES_DIR,
     )
     admin.add_view(DashboardView)
+    admin.add_view(IngestionLogView)
+    admin.add_view(IngestionRunView)
+    admin.add_view(DocumentChangeLogAdmin)
     admin.add_view(SearchLogAdmin)
     admin.add_view(DocumentAdmin)
     admin.add_view(TopicAdmin)

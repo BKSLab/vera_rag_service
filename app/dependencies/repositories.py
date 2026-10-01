@@ -4,6 +4,7 @@ from fastapi import Depends
 
 from app.dependencies.db_session import DbSessionDep
 from app.repositories.document import DocumentRepository
+from app.repositories.document_change_log import DocumentChangeLogRepository
 from app.repositories.search_log import SearchLogRepository
 
 
@@ -19,3 +20,12 @@ def get_document_repository(db_session: DbSessionDep) -> DocumentRepository:
 
 
 DocumentRepositoryDep = Annotated[DocumentRepository, Depends(get_document_repository)]
+
+
+def get_document_change_log_repository(db_session: DbSessionDep) -> DocumentChangeLogRepository:
+    return DocumentChangeLogRepository(db_session)
+
+
+DocumentChangeLogRepositoryDep = Annotated[
+    DocumentChangeLogRepository, Depends(get_document_change_log_repository)
+]

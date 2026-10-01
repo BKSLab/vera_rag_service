@@ -1,3 +1,4 @@
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -17,20 +18,24 @@ CHUNK_PAYLOAD = {
     'audience': 'employer',
     'topics': ['quota'],
     'category': 'federal_law',
+    'effective_date': '2026-05-25',
 }
 
 
-def _build_service(*, has_candidates: bool = True) -> tuple[SearchService, AsyncMock]:
+def _build_service(
+    *, has_candidates: bool = True, payload: dict | None = None
+) -> tuple[SearchService, AsyncMock]:
     embedding_client = AsyncMock(spec=EmbeddingClient)
     embedding_client.get_embedding.return_value = [0.1, 0.2, 0.3]
 
+    chunk_payload = CHUNK_PAYLOAD if payload is None else payload
     qdrant_client = AsyncMock()
     if has_candidates:
         qdrant_client.query_points.return_value = SimpleNamespace(
             points=[SimpleNamespace(id=CHUNK_ID, score=0.9)]
         )
-        qdrant_client.scroll.return_value = ([SimpleNamespace(id=CHUNK_ID, payload=CHUNK_PAYLOAD)], None)
-        qdrant_client.retrieve.return_value = [SimpleNamespace(id=CHUNK_ID, payload=CHUNK_PAYLOAD)]
+        qdrant_client.scroll.return_value = ([SimpleNamespace(id=CHUNK_ID, payload=chunk_payload)], None)
+        qdrant_client.retrieve.return_value = [SimpleNamespace(id=CHUNK_ID, payload=chunk_payload)]
     else:
         qdrant_client.query_points.return_value = SimpleNamespace(points=[])
         qdrant_client.scroll.return_value = ([], None)
@@ -79,6 +84,33 @@ async def test_search_returns_reranked_chunk_and_saves_log():
     reranker_prompt = service.reranker_llm_client.get_llm_response.await_args.kwargs['content']
     assert 'source_title=ФЗ-181, Статья 21' in reranker_prompt
     assert 'category=federal_law' in reranker_prompt
+
+
+async def test_search_result_carries_revision_of_the_quoted_text():
+    """Норма без указания редакции — утверждение без даты.
+
+    Потребитель (агент через MCP) получает только то, что лежит в
+    `SearchResultChunk`, поэтому дата редакции и акт-поправка обязаны
+    доходить до него, а не оставаться внутри поиска.
+    """
+    service, _ = _build_service()
+
+    results = await service.search(query='квота на инвалидов', filters=SearchFilters(), top_k=5)
+
+    assert results[0].revision_date == date(2026, 5, 25)
+    assert results[0].amending_act is None
+
+
+async def test_search_result_names_the_act_that_changed_the_article():
+    """У статьи, обновлённой Legal Sync'ом, в payload лежит акт-поправка —
+    он должен доехать до потребителя как точная ссылка на изменение."""
+    service, _ = _build_service(
+        payload=CHUNK_PAYLOAD | {'amending_act': 'Федеральный закон от 26.07.2026 № 246-ФЗ'},
+    )
+
+    results = await service.search(query='квота на инвалидов', filters=SearchFilters(), top_k=5)
+
+    assert results[0].amending_act == 'Федеральный закон от 26.07.2026 № 246-ФЗ'
 
 
 async def test_search_returns_empty_list_and_saves_log_when_no_candidates():

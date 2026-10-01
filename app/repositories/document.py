@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from sqlalchemy import delete, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,25 +17,21 @@ class DocumentRepository:
     def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
 
-    async def acquire_document_lock(self, document_id: str) -> None:
-        """Сессионный Postgres advisory lock на `document_id` (ING-2) —
-        серилизует конкурентные `ingest_document` для одного и того же
-        документа (двойной клик в форме загрузки, повторный retry клиента
-        поверх ещё выполняющегося запроса). Сессионный, не транзакционный
-        (`pg_advisory_lock`, не `pg_advisory_xact_lock`) — должен держаться
-        на протяжении всего `ingest_document`, который коммитит несколько
-        раз (`save_document`/`mark_versions_inactive`), а не одной
-        транзакции. Снимается явно через `release_document_lock` —
-        вызывающий код обязан сделать это в `finally`.
-        """
-        await self.db_session.execute(
-            text('SELECT pg_advisory_lock(hashtext(:document_id))'), {'document_id': document_id}
-        )
+    @asynccontextmanager
+    async def document_lock(self, document_id: str) -> AsyncIterator[None]:
+        """Сериализует полную загрузку и обновления статей одного документа.
 
-    async def release_document_lock(self, document_id: str) -> None:
-        await self.db_session.execute(
-            text('SELECT pg_advisory_unlock(hashtext(:document_id))'), {'document_id': document_id}
-        )
+        Отдельная транзакция удерживает одно соединение до выхода из блока.
+        Коммиты реестра и журнала её не освобождают; завершение или обрыв
+        соединения снимает блокировку без session-lock, оставшегося в пуле.
+        """
+        async with AsyncSession(bind=self.db_session.bind) as lock_session:
+            async with lock_session.begin():
+                await lock_session.execute(
+                    text('SELECT pg_advisory_xact_lock(hashtext(:document_id))'),
+                    {'document_id': document_id},
+                )
+                yield
 
     async def save_document(self, document: Document) -> None:
         """Записывает или обновляет одну версию документа после успешного ingestion в Qdrant.
@@ -51,7 +50,12 @@ class DocumentRepository:
                 'source_title': document.source_title,
                 'audience': document.audience,
                 'topics': document.topics,
-                'effective_date': document.effective_date,
+                'act_type': document.act_type,
+                'act_number': document.act_number,
+                'act_date': document.act_date,
+                'act_title': document.act_title,
+                'act_authority': document.act_authority,
+                'revision_date': document.revision_date,
                 'is_active': document.is_active,
             }
             statement = (
@@ -64,7 +68,12 @@ class DocumentRepository:
                         'source_title': values['source_title'],
                         'audience': values['audience'],
                         'topics': values['topics'],
-                        'effective_date': values['effective_date'],
+                        'act_type': values['act_type'],
+                        'act_number': values['act_number'],
+                        'act_date': values['act_date'],
+                        'act_title': values['act_title'],
+                        'act_authority': values['act_authority'],
+                        'revision_date': values['revision_date'],
                         'is_active': values['is_active'],
                     },
                 )

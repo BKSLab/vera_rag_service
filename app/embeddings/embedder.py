@@ -4,6 +4,7 @@ from app.clients.embeddings import EmbeddingClient
 from app.core.config_logger import logger
 from app.ingestion.enrichment import build_embedding_text
 from app.models.schemas import EmbeddedChunk, EnrichedChunk
+from app.services.ingestion_journal import chunk_completed
 
 # Как и обогащение (Этап 3) — офлайн-процесс, требует ограничения
 # конкурентности к Yandex Cloud API. Снижено с 5 до 3 (2026-06-21) —
@@ -69,7 +70,9 @@ async def embed_chunks(
 
     async def _embed_with_limit(enriched_chunk: EnrichedChunk) -> EmbeddedChunk:
         async with semaphore:
-            return await embed_chunk(embedding_client, enriched_chunk, doc_model_uri)
+            result = await embed_chunk(embedding_client, enriched_chunk, doc_model_uri)
+            chunk_completed('embedding')
+            return result
 
     logger.info(
         '🤖 Эмбеддинг %d чанков (конкурентность: %d).', len(enriched_chunks), EMBEDDING_CONCURRENCY

@@ -6,11 +6,14 @@ from app.db.session import async_session_factory
 from app.dependencies.clients import (
     get_embedding_client,
     get_enrichment_llm_client,
+    get_legal_sync_client,
     get_query_expansion_llm_client,
     get_reranker_llm_client,
 )
 from app.dependencies.vectorstore import get_vector_store
 from app.repositories.document import DocumentRepository
+from app.repositories.document_change_log import DocumentChangeLogRepository
+from app.repositories.ingestion_run import IngestionRunRepository
 from app.repositories.search_log import SearchLogRepository
 from app.services.documents import DocumentsService
 from app.services.ingestion import IngestionService
@@ -35,6 +38,10 @@ async def build_ingestion_service() -> AsyncIterator[IngestionService]:
             embedding_client=get_embedding_client(external_api_http_client),
             vector_store=get_vector_store(),
             document_repository=DocumentRepository(db_session),
+            change_log_repository=DocumentChangeLogRepository(db_session),
+            legal_sync_client=get_legal_sync_client(external_api_http_client),
+            ingestion_run_repository=IngestionRunRepository(async_session_factory),
+            source='admin',
         )
 
 

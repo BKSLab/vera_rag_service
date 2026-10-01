@@ -17,6 +17,7 @@ from app.admin import create_admin
 from app.api.v1.endpoints.documents import router as documents_router
 from app.api.v1.endpoints.health import router as health_router
 from app.api.v1.endpoints.ingest import router as ingest_router
+from app.api.v1.endpoints.ingestion_runs import router as ingestion_runs_router
 from app.api.v1.endpoints.search import router as search_router
 from app.clients.http_client import external_api_http_client
 from app.core.config_logger import logger
@@ -95,6 +96,7 @@ create_admin(app=app, engine=engine)
 app.include_router(health_router, prefix='/api/v1')
 app.include_router(search_router, prefix='/api/v1')
 app.include_router(ingest_router, prefix='/api/v1')
+app.include_router(ingestion_runs_router, prefix='/api/v1')
 app.include_router(documents_router, prefix='/api/v1')
 
 # LOG-5 (AUDIT_VERIFICATION_AND_IMPLEMENTATION_PLAN.md) — минимальные

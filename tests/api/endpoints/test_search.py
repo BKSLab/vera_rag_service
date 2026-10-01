@@ -1,3 +1,4 @@
+from datetime import date
 from unittest.mock import AsyncMock
 
 from httpx import AsyncClient
@@ -21,6 +22,7 @@ async def test_search_chunks_returns_200_with_results(async_client: AsyncClient)
             audience='employer',
             topics=['quota'],
             category='federal_law',
+            revision_date=date(2026, 5, 25),
             score=0.9,
             rerank_rank=1,
         )

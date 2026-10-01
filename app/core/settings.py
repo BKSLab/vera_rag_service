@@ -177,6 +177,35 @@ class ObservabilitySettings(SettingsBase):
     phoenix_project_name: str = 'vera-local'
 
 
+class LegalSyncSettings(SettingsBase):
+    """Настройки Legal Sync Service — мониторинга изменений НПА."""
+
+    legal_sync_enabled: bool = False
+    legal_sync_base_url: str = 'http://localhost:8002'
+    legal_sync_admin_base_url: str | None = None
+    legal_sync_api_key: SecretStr | None = None
+    legal_sync_timeout_seconds: int = 30
+    # Категории, документы которых ставятся на контроль изменений. Судебная
+    # практика и авторские материалы не меняются актами-поправками, поэтому
+    # мониторинг для них лишён смысла.
+    legal_sync_tracked_categories: str = 'labor_code,federal_law,other_npa'
+    # Блоки публикации на publication.pravo.gov.ru: у актов Президента и
+    # федеральных законов один блок, у постановлений Правительства другой.
+    legal_sync_president_block: str = 'president'
+    legal_sync_government_block: str = 'government'
+
+    @property
+    def tracked_categories(self) -> set[str]:
+        """Категории, для которых включается мониторинг изменений."""
+        return {item.strip() for item in self.legal_sync_tracked_categories.split(',') if item.strip()}
+
+    def publication_block_for(self, category: str) -> str:
+        """Возвращает блок официального опубликования для категории источника."""
+        if category == 'other_npa':
+            return self.legal_sync_government_block
+        return self.legal_sync_president_block
+
+
 class Settings(BaseSettings):
     """Агрегатор всех доменных настроек проекта."""
 
@@ -187,6 +216,7 @@ class Settings(BaseSettings):
     polza: PolzaSettings = Field(default_factory=PolzaSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
+    legal_sync: LegalSyncSettings = Field(default_factory=LegalSyncSettings)
 
 
 @lru_cache

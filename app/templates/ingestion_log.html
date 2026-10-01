@@ -1,0 +1,27 @@
+{% extends "sqladmin/layout.html" %}
+{% block content %}
+<div class="col-12"><div class="card"><div class="card-header"><h3 class="card-title">Обновления коллекции</h3></div>
+<div class="card-body">
+  <p class="text-muted">Полные загрузки и обновления статей. Время — UTC. Каждая попытка сохраняется отдельно, включая ошибки и повторы.</p>
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3"><label class="form-label" for="document-id">Документ (точный ID)</label><input id="document-id" class="form-control" name="document_id" value="{{ filters.document_id }}"></div>
+    <div class="col-md-2"><label class="form-label" for="run-status">Статус</label><select id="run-status" name="status" class="form-select"><option value="">Все</option>{% for key in ['running','succeeded','warning','failed','rejected','interrupted','stalled'] %}<option value="{{ key }}" {% if filters.status == key %}selected{% endif %}>{{ status_labels[key] }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label" for="run-kind">Операция</label><select id="run-kind" name="kind" class="form-select"><option value="">Все</option><option value="document" {% if filters.kind == 'document' %}selected{% endif %}>Документ целиком</option><option value="section" {% if filters.kind == 'section' %}selected{% endif %}>Статья</option></select></div>
+    <div class="col-md-3"><label class="form-label" for="attempt-id">Попытка отправки / Request ID</label><input id="attempt-id" class="form-control" name="request_id" value="{{ filters.request_id }}"></div>
+    <div class="col-md-2"><label class="form-label" for="change-id">Изменение в Sync</label><input id="change-id" class="form-control" name="change_id" value="{{ filters.change_id }}"></div>
+    <div class="col-12"><button class="btn btn-primary">Показать</button> <a href="/admin/ingestion-log" class="btn btn-outline-primary">Сбросить</a></div>
+  </form>
+</div>
+{% if error %}<div class="alert alert-danger m-3">{{ error }}</div>{% endif %}
+<div class="table-responsive"><table class="table table-vcenter"><thead><tr><th>Начало / длительность</th><th>Документ</th><th>Редакция / коллекция</th><th>Результат / этап</th><th>Источник</th></tr></thead><tbody>
+{% for run in runs %}<tr>
+  <td><a href="/admin/ingestion-run/{{ run.id }}">{{ run.started_at.strftime('%d.%m.%Y %H:%M:%S') }}</a><div class="text-muted">{{ run.duration_seconds }} с</div></td>
+  <td>{{ run.document_id }}<div class="text-muted">{{ 'Статья ' ~ run.section_number if run.kind == 'section' else 'Документ целиком' }}</div></td>
+  <td>{{ run.version }}<div class="text-muted">{{ run.collection_name }}</div></td>
+  <td><span class="badge bg-{{ 'green' if run.display_status == 'succeeded' else 'red' if run.display_status in ['failed','interrupted'] else 'yellow' if run.display_status in ['warning','stalled','rejected'] else 'blue' }}-lt">{{ status_labels[run.display_status] }}</span><div class="text-muted mt-1">{{ stage_labels.get(run.current_stage, 'Принято') }}</div></td>
+  <td>{{ {'api':'API','admin':'Админка','legal_sync':'Legal Sync'}.get(run.source,run.source) }}{% if run.change_id %}<div>Изменение #{{ run.change_id }}</div>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="5" class="text-muted">Операций пока нет. История появится после первой загрузки или обновления с включённым журналом.</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="card-footer d-flex gap-3 align-items-center"><span>Найдено: {{ total }} · Страница {{ page }}</span>{% if page > 1 %}<a href="{{ previous_url }}">Назад</a>{% endif %}{% if page * 25 < total %}<a href="{{ next_url }}">Далее</a>{% endif %}<a href="{{ request.url }}" class="ms-auto">Обновить</a></div>
+</div></div>
+{% endblock %}

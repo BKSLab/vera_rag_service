@@ -1,4 +1,35 @@
 from collections.abc import Iterable
+from datetime import date
+
+
+class StaleRevisionError(Exception):
+    """Принимаемый текст старше уже проиндексированной редакции."""
+
+    def __init__(self, document_id: str, revision_date: date, current_revision_date: date):
+        self.document_id = document_id
+        self.revision_date = revision_date
+        self.current_revision_date = current_revision_date
+        super().__init__(
+            f'Документ {document_id}: редакция {revision_date} устарела; '
+            f'уже загружена редакция {current_revision_date}.'
+        )
+
+    @property
+    def detail(self) -> dict[str, str]:
+        return {
+            'code': 'stale_revision',
+            'message': str(self),
+            'document_id': self.document_id,
+            'revision_date': self.revision_date.isoformat(),
+            'current_revision_date': self.current_revision_date.isoformat(),
+        }
+
+
+class EmptyIngestionContentError(ValueError):
+    """После удаления редакционных пометок не осталось индексируемого текста."""
+
+    def __init__(self, document_id: str):
+        super().__init__(f'Документ {document_id}: текст для индексации отсутствует.')
 
 
 class IngestionIntegrityError(Exception):

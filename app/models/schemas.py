@@ -1,8 +1,26 @@
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.metadata import Audience, Category
+from app.models.requisites import (
+    ActType,
+    allowed_act_types,
+    build_act_reference,
+    build_document_id,
+    default_authority,
+    requisites_required,
+    revision_applicable,
+)
+
+# Обязательный суффикс номера акта по категории — простая проверка, которая
+# ловит перепутанную категорию на вводе: у кодексов и федеральных законов
+# номер всегда оканчивается на «-ФЗ» или «-ФКЗ». У подзаконных актов номера
+# слишком разнородны (845, 1234-р, 33н), поэтому там проверки нет.
+REQUIRED_NUMBER_SUFFIX_BY_CATEGORY: dict[str, str] = {
+    'labor_code': 'ФЗ',
+    'federal_law': 'ФЗ',
+}
 
 # Верхняя граница `raw_text` одного документа (API-3, RAG_SERVICE_PLAN.md,
 # раздел 7). Без лимита один запрос мог бы запустить неограниченное число
@@ -41,7 +59,9 @@ class Chunk(BaseModel):
     chunk_number_in_section: int = Field(
         ..., description='Локальный порядковый номер чанка внутри секции (Этап 13 плана).',
     )
-    document_id: str = Field(..., description='Идентификатор документа-источника.')
+    document_id: str = Field(
+        ..., description='Идентификатор документа-источника.', examples=['fz-181-1995'],
+    )
     parent_id: str = Field(
         ..., description='Единица обновления/удаления статьи: f"{document_id}:{section_number}" или document_id (Этап 13).',
     )
@@ -61,7 +81,9 @@ class Section(BaseModel):
     в метаданные каждого чанка, полученного из этой секции.
     """
 
-    document_id: str = Field(..., description='Идентификатор документа-источника.')
+    document_id: str = Field(
+        ..., description='Идентификатор документа-источника.', examples=['fz-181-1995'],
+    )
     category: Category = Field(..., description='Категория источника (раздел 3 плана).')
     section_index: int = Field(..., description='Порядковый номер секции в документе.')
     section_number: str | None = Field(
@@ -138,8 +160,19 @@ class DocumentMetadataInput(BaseModel):
         description='Темы документа (раздел 3 плана) — допустимы только для other_npa/case_law/authorial, '
         'для labor_code/federal_law список должен быть пустым.',
     )
-    version: str = Field(..., description='Дата редакции документа в формате ISO (YYYY-MM-DD).')
-    effective_date: date = Field(..., description='Дата вступления редакции в силу.')
+    version: str = Field(..., description='Ключ ревизии документа в хранилище (ISO-дата содержимого).')
+    amending_act: str | None = Field(
+        None,
+        description='Акт, которым внесены изменения в эту статью; задаётся только при гранулярном обновлении.',
+        examples=['Федеральный закон от 26.07.2026 № 246-ФЗ'],
+    )
+    effective_date: date = Field(
+        ...,
+        description=(
+            'Начало интервала действия этой редакции чанка; в паре с `effective_until` '
+            'обслуживает запросы «какой текст действовал на дату X».'
+        ),
+    )
 
     @field_validator('version')
     @classmethod
@@ -182,6 +215,23 @@ class SearchResultChunk(BaseModel):
     )
     section_number: str | None = Field(None, description='Номер статьи/пункта из структуры документа (например, "128").')
     section_title: str | None = Field(None, description='Заголовок статьи/пункта (например, "Статья 128. Отпуска без сохранения заработной платы").')
+    revision_date: date = Field(
+        ...,
+        description=(
+            'Редакция, из которой взят этот текст. Норма без указания редакции — утверждение '
+            'без даты, поэтому потребитель обязан иметь возможность сослаться на неё: '
+            '«статья 128 в редакции от 01.03.2027».'
+        ),
+        examples=['2027-03-01'],
+    )
+    amending_act: str | None = Field(
+        None,
+        description=(
+            'Акт, которым изменена именно эта статья; `None` — статья не менялась с момента '
+            'загрузки документа. Задаётся только при гранулярном обновлении редакции.'
+        ),
+        examples=['Федеральный закон от 26.07.2026 № 246-ФЗ'],
+    )
     score: float = Field(..., description='Итоговый score после RRF fusion.')
     rerank_rank: int = Field(..., ge=1, description='Позиция чанка после LLM-reranker, начиная с 1.')
 
@@ -262,41 +312,177 @@ class SearchResponse(BaseModel):
     chunks: list[SearchResultChunk] = Field(..., description='Найденные чанки, отсортированные по релевантности.')
 
 
-class IngestRequest(BaseModel):
-    """Тело запроса `POST /ingest` — запуск ingestion-пайплайна для одного документа."""
+class ActRequisitesMixin(BaseModel):
+    """Реквизиты правового акта — общая часть карточки документа.
 
-    document_id: str = Field(..., min_length=1, description='Идентификатор документа.', examples=['fz-181-art21'])
+    Наименование хранится разобранным, а не одной строкой: собрать строку из
+    реквизитов можно всегда, разобрать обратно — уже нет. `document_id` и
+    `source_title` не вводятся, а выводятся отсюда, поэтому один и тот же акт
+    нельзя завести под двумя разными наименованиями.
+    """
+
     category: Category = Field(..., description='Категория источника (раздел 3 плана).')
-    raw_text: str = Field(
-        ..., min_length=1, max_length=MAX_RAW_TEXT_LENGTH,
-        description='Исходный текст документа (PDF/MD/TXT уже декодированы в строку).',
+    act_type: ActType | None = Field(
+        None,
+        description='Вид акта. Допустимые значения зависят от категории; для авторских материалов не задаётся.',
+        examples=['Федеральный закон'],
+    )
+    act_number: str | None = Field(
+        None, max_length=100,
+        description='Номер акта. Обязателен для нормативных актов и судебной практики.',
+        examples=['181-ФЗ'],
+    )
+    act_date: date = Field(
+        ...,
+        description='Дата акта: дата подписания для правовых актов, дата публикации для авторских материалов.',
+        examples=['1995-11-24'],
+    )
+    act_title: str = Field(
+        ..., min_length=1,
+        description='Наименование акта без реквизитов.',
+        examples=['О социальной защите инвалидов в Российской Федерации'],
+    )
+    act_authority: str | None = Field(
+        None,
+        description='Принявший (подписавший) орган. Подставляется по виду акта, если не задан.',
+        examples=['Президент Российской Федерации'],
+    )
+    revision_date: date | None = Field(
+        None,
+        description=(
+            'Дата действующей редакции акта — «редакция от». Обязательна для нормативных актов; '
+            'к судебной практике и авторским материалам не применяется.'
+        ),
+        examples=['2026-05-25'],
+    )
+    document_id: str | None = Field(
+        None, max_length=255,
+        description='Идентификатор документа. Выводится из реквизитов; задавать вручную нужно только там, где номера акта нет.',
+        examples=['fz-181-1995'],
     )
     source_title: str = Field(
         ...,
+        min_length=1,
         description=(
-            'Полное официальное наименование документа: вид акта, дата принятия, номер и название. '
-            'Возвращается потребителю как ссылка на источник, поэтому должно точно соответствовать документу.'
+            'Отображаемое название документа целиком — то, что видит пользователь как ссылку '
+            'на источник. Задаётся оператором, а не собирается из реквизитов: принятое '
+            'написание из полей не выводится (кавычки-ёлочки, дата словами, «N» вместо «№», '
+            'наименование кодекса без реквизитов), а эта строка уходит в промпт обогащения, '
+            "а значит и в эмбеддинги, в заголовок кандидата reranker'а и в абзац «Основание» "
+            'ответа. Её формулировка — часть настроенного бенчмарками качества выдачи, и '
+            'менять её из-за смены способа хранения реквизитов нельзя.'
         ),
-        examples=['Федеральный закон от 24.11.1995 № 181-ФЗ "О социальной защите инвалидов в Российской Федерации"'],
+        examples=['Федеральный закон «О социальной защите инвалидов в Российской Федерации» от 24 ноября 1995 N 181-ФЗ'],
+    )
+
+    @model_validator(mode='after')
+    def validate_and_complete_requisites(self) -> 'ActRequisitesMixin':
+        """Проверяет реквизиты по правилам категории и достраивает выводимые поля."""
+
+        self._validate_act_type()
+        self._validate_act_number()
+        self._validate_revision_date()
+        if self.act_authority is None and self.act_type is not None:
+            self.act_authority = default_authority(self.act_type)
+        if self.document_id is None:
+            self.document_id = self._build_document_id()
+        return self
+
+    @property
+    def content_date(self) -> date:
+        """Дата, которой датируется содержимое документа.
+
+        Для нормативных актов это дата действующей редакции, для остальных —
+        дата самого документа: редакций у них не бывает.
+        """
+
+        return self.revision_date or self.act_date
+
+    @property
+    def version(self) -> str:
+        """Ключ ревизии документа в хранилище — выводится из даты содержимого."""
+
+        return self.content_date.isoformat()
+
+    def _validate_act_type(self) -> None:
+        allowed = allowed_act_types(self.category)
+        if not requisites_required(self.category):
+            return
+        if self.act_type is None:
+            raise ValueError(f'Для категории {self.category!r} обязателен вид акта.')
+        if self.act_type not in allowed:
+            raise ValueError(
+                f'Вид акта {self.act_type!r} недопустим для категории {self.category!r}. '
+                f'Допустимые: {list(allowed)}.'
+            )
+
+    def _validate_act_number(self) -> None:
+        if not requisites_required(self.category):
+            return
+        if not self.act_number:
+            raise ValueError(f'Для категории {self.category!r} обязателен номер акта.')
+        expected_suffix = REQUIRED_NUMBER_SUFFIX_BY_CATEGORY.get(self.category)
+        if expected_suffix and not self.act_number.upper().endswith(expected_suffix):
+            raise ValueError(
+                f'Номер акта {self.act_number!r} не оканчивается на {expected_suffix!r}: '
+                f'это не документ категории {self.category!r}.'
+            )
+
+    def _validate_revision_date(self) -> None:
+        if revision_applicable(self.category):
+            if self.revision_date is None:
+                raise ValueError(
+                    f'Для категории {self.category!r} обязательна дата действующей редакции.'
+                )
+            if self.revision_date < self.act_date:
+                raise ValueError('Дата редакции не может быть раньше даты самого акта.')
+        elif self.revision_date is not None:
+            raise ValueError(
+                f'К категории {self.category!r} дата редакции не применяется: '
+                'такие документы не изменяются, а заменяются новыми.'
+            )
+
+    def _build_document_id(self) -> str:
+        if not self.act_number:
+            raise ValueError(
+                'Идентификатор документа не выводится без номера акта — задайте document_id явно.'
+            )
+        return build_document_id(
+            category=self.category,
+            act_number=self.act_number,
+            act_date=self.act_date,
+        )
+
+
+class IngestRequest(ActRequisitesMixin):
+    """Тело запроса `POST /ingest` — запуск ingestion-пайплайна для одного документа."""
+
+    raw_text: str = Field(
+        ..., min_length=1, max_length=MAX_RAW_TEXT_LENGTH,
+        description='Исходный текст документа (PDF/MD/TXT уже декодированы в строку).',
     )
     audience: Audience = Field(..., description='Целевая аудитория.')
     topics: list[str] = Field(
         default_factory=list,
         description='Темы документа (раздел 3 плана) — допустимы только для other_npa/case_law/authorial.',
     )
-    version: str = Field(..., description='Дата редакции документа в формате ISO (YYYY-MM-DD).')
-    effective_date: date = Field(..., description='Дата вступления редакции в силу.')
-
-    @field_validator('version')
-    @classmethod
-    def canonicalize_version(cls, value: str) -> str:
-        return _canonical_iso_date(value)
 
 
-class IngestResponse(BaseModel):
+class IngestionReceipt(BaseModel):
+    """Подтверждение записи и проверки коллекции, общее для двух путей загрузки."""
+
+    operation_id: str | None = None
+    status: str = 'succeeded'
+    warnings: list[str] = Field(default_factory=list)
+    collection_name: str | None = None
+    input_sha256: str | None = None
+    integrity_verified: bool = False
+
+
+class IngestResponse(IngestionReceipt):
     """Тело ответа `POST /ingest`."""
 
-    document_id: str = Field(..., description='Идентификатор документа.')
+    document_id: str = Field(..., description='Идентификатор документа.', examples=['fz-181-1995'])
     version: str = Field(..., description='Версия, под которой документ проиндексирован.')
     chunks_count: int = Field(..., description='Количество созданных чанков.')
     replaced_versions: list[str] = Field(
@@ -314,12 +500,19 @@ class IngestResponse(BaseModel):
 class DocumentDeletedResponse(BaseModel):
     """Тело ответа `DELETE /document/{id}`."""
 
-    document_id: str = Field(..., description='Идентификатор удалённого документа.')
+    document_id: str = Field(
+        ..., description='Идентификатор удалённого документа.', examples=['fz-181-1995'],
+    )
 
 
 # Категории, поддерживающие гранулярное обновление одной статьи/пункта
-# (Этап 13 плана). other_npa, case_law и authorial обновляются только целым документом.
-SECTION_UPDATE_ALLOWED_CATEGORIES: frozenset[str] = frozenset({'labor_code', 'federal_law'})
+# (Этап 13 плана). case_law и authorial обновляются только целым документом:
+# у них нет устойчивой нумерации статей, за которую можно зацепиться.
+# other_npa добавлена вместе с мониторингом постановлений Правительства РФ
+# в Legal Sync Service — они меняются постатейно ровно так же, как законы.
+SECTION_UPDATE_ALLOWED_CATEGORIES: frozenset[str] = frozenset(
+    {'labor_code', 'federal_law', 'other_npa'}
+)
 
 # Категории, для которых осмысленны темы (раздел 3 плана, обсуждение с
 # пользователем 2026-07-08) — узкие по предмету источники, документ обычно
@@ -346,32 +539,68 @@ class SectionUpdateRequest(BaseModel):
         description='Готовый текст только этой статьи/пункта (не закон-поправка с описанием дельты).',
     )
     section_title: str = Field(..., min_length=1, description='Заголовок статьи/пункта (например, "Отпуска без сохранения заработной платы").')
-    version: str = Field(..., description='Дата редакции в формате ISO (YYYY-MM-DD).')
-    effective_date: date = Field(..., description='Дата вступления этой редакции в силу.')
+    revision_date: date = Field(
+        ...,
+        description='Дата редакции, из которой взят текст этой статьи.',
+        examples=['2027-03-01'],
+    )
     source_title: str = Field(
         ...,
         description=(
             'Полное официальное наименование документа: вид акта, дата принятия, номер и название. '
             'Возвращается потребителю как ссылка на источник, поэтому должно точно соответствовать документу.'
         ),
-        examples=['Трудовой кодекс Российской Федерации от 30.12.2001 № 197-ФЗ'],
+        examples=['"Трудовой кодекс Российской Федерации" от 30.12.2001 № 197-ФЗ'],
     )
     audience: Audience = Field(..., description='Целевая аудитория.')
     topics: list[str] = Field(
         default_factory=list,
         description='Темы должны быть пустыми для категорий с гранулярным обновлением.',
     )
+    amending_act_type: str | None = Field(
+        None,
+        description='Вид акта, которым внесены изменения в эту статью.',
+        examples=['Федеральный закон'],
+    )
+    amending_act_number: str | None = Field(
+        None, max_length=100,
+        description='Номер акта, которым внесены изменения в эту статью.',
+        examples=['246-ФЗ'],
+    )
+    amending_act_date: date | None = Field(
+        None,
+        description='Дата акта, которым внесены изменения в эту статью.',
+        examples=['2026-07-26'],
+    )
 
-    @field_validator('version')
-    @classmethod
-    def canonicalize_version(cls, value: str) -> str:
-        return _canonical_iso_date(value)
+    @property
+    def version(self) -> str:
+        """Ключ ревизии статьи в хранилище — выводится из даты редакции."""
+
+        return self.revision_date.isoformat()
+
+    @property
+    def amending_act_reference(self) -> str | None:
+        """Ссылка на акт, которым внесены изменения именно в эту статью.
+
+        Хранится на уровне статьи, а не документа: один закон меняет лишь
+        часть статей кодекса, и приписывать его остальным — значит утверждать
+        неправду о происхождении их текста.
+        """
+
+        if not (self.amending_act_type and self.amending_act_number and self.amending_act_date):
+            return None
+        return build_act_reference(
+            act_type=self.amending_act_type,
+            act_number=self.amending_act_number,
+            act_date=self.amending_act_date,
+        )
 
 
-class SectionUpdateResponse(BaseModel):
+class SectionUpdateResponse(IngestionReceipt):
     """Тело ответа `PUT /document/{id}/sections/{section_number}`."""
 
-    document_id: str = Field(..., description='Идентификатор документа.')
+    document_id: str = Field(..., description='Идентификатор документа.', examples=['fz-181-1995'])
     section_number: str = Field(..., description='Номер обновлённой статьи/пункта.')
     parent_id: str = Field(..., description='Идентификатор секции: f"{document_id}:{section_number}".')
     version: str = Field(..., description='Версия, под которой проиндексирована новая редакция.')

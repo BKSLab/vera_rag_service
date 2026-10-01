@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from app.clients.embeddings import EmbeddingClient
+from app.clients.legal_sync import LegalSyncClient
 from app.clients.llm import LlmClient
 from app.core.circuit_breaker import CircuitBreaker
 from app.core.rate_limiter import RateLimiter
@@ -132,3 +133,18 @@ def get_query_expansion_llm_client(httpx_client: HttpClientDep) -> LlmClient:
 
 
 QueryExpansionLlmClientDep = Annotated[LlmClient, Depends(get_query_expansion_llm_client)]
+
+
+def get_legal_sync_client(httpx_client: HttpClientDep) -> LegalSyncClient | None:
+    """Клиент Legal Sync Service — сервиса мониторинга изменений НПА.
+
+    Возвращает `None`, когда мониторинг выключен настройкой: тогда ingestion
+    просто не ставит документы на контроль изменений.
+    """
+    settings = get_settings().legal_sync
+    if not settings.legal_sync_enabled:
+        return None
+    return LegalSyncClient(httpx_client=httpx_client, settings=settings)
+
+
+LegalSyncClientDep = Annotated[LegalSyncClient | None, Depends(get_legal_sync_client)]

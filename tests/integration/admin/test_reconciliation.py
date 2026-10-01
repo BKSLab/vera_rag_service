@@ -29,7 +29,10 @@ def make_document_row(document_id: str, version: str) -> Document:
     return Document(
         document_id=document_id, version=version, category='labor_code',
         source_title='Источник', audience='both', topics=['quota'],
-        effective_date=date(2026, 1, 1), is_active=True,
+        act_type='Кодекс Российской Федерации', act_number='197-ФЗ',
+        act_date=date(2001, 12, 30), act_title='Трудовой кодекс Российской Федерации',
+        act_authority='Президент Российской Федерации',
+        revision_date=date(2026, 1, 1), is_active=True,
     )
 
 

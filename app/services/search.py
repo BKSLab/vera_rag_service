@@ -292,6 +292,11 @@ class SearchService:
                 category=payload_by_id[chunk_id]['category'],
                 section_number=payload_by_id[chunk_id].get('section_number'),
                 section_title=payload_by_id[chunk_id].get('section_title'),
+                # В payload это поле называется `effective_date` — начало
+                # интервала действия редакции в паре с `effective_until`.
+                # Потребителю оно нужно в роли «в редакции от», отсюда имя.
+                revision_date=payload_by_id[chunk_id]['effective_date'],
+                amending_act=payload_by_id[chunk_id].get('amending_act'),
                 score=rrf_scores.get(chunk_id, 0.0),
                 rerank_rank=rerank_rank,
             )

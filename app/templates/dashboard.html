@@ -1,5 +1,7 @@
 {% extends "sqladmin/layout.html" %}
 {% block content %}
+{% if ingestion_log_error %}<div class="col-12"><div class="alert alert-warning">{{ ingestion_log_error }}</div></div>{% endif %}
+<div class="col-12"><div class="card"><div class="card-header"><h3 class="card-title">Последние обновления коллекции</h3><a class="ms-auto" href="/admin/ingestion-log">Все операции и этапы</a></div><div class="card-body">{% for run in recent_runs %}<div class="mb-2"><a href="/admin/ingestion-run/{{ run.id }}">{{ run.document_id }}{% if run.section_number %} · Статья {{ run.section_number }}{% endif %}</a> · {{ run_status_labels[run.display_status] }} · {{ run.version }}</div>{% else %}<span class="text-muted">Журнал начнёт заполняться при новых загрузках и обновлениях.</span>{% endfor %}</div></div></div>
 {# Каждый блок — отдельный col-12, не несколько блоков в одном.
    У Tabler есть правило `.row-deck > .col { display:flex; align-items:stretch }`
    (применяется к прямому ребёнку внешнего `.row.row-deck.row-cards` из
@@ -69,6 +71,49 @@
           <div class="h4 mb-0">{{ stats.last_search_at.strftime('%Y-%m-%d %H:%M') if stats.last_search_at else '—' }}</div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+{# Синхронизация изменений НПА: отказы вынесены в отдельную карточку и
+   подсвечиваются, потому что молчание журнала неотличимо от исправной
+   работы — заметить проблему можно только по ненулевому счётчику. #}
+<div class="col-12">
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">Изменения статей от сервиса синхронизации (за последние 24 часа)</h3>
+    </div>
+    <div class="card-body">
+      <div class="row row-cards">
+        <div class="col-sm-6 col-lg-3">
+          <div class="text-muted">Применено</div>
+          <div class="h2 mb-0">{{ stats.changes_applied_recent }}</div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <div class="text-muted">Отклонено</div>
+          <div class="h2 mb-0 {{ 'text-warning' if stats.changes_rejected_recent else '' }}">
+            {{ stats.changes_rejected_recent }}
+          </div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <div class="text-muted">Сорвалось</div>
+          <div class="h2 mb-0 {{ 'text-danger' if stats.changes_failed_recent else '' }}">
+            {{ stats.changes_failed_recent }}
+          </div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <div class="text-muted">Последнее изменение</div>
+          <div class="h4 mb-0">
+            {{ stats.last_change_at.strftime('%Y-%m-%d %H:%M') if stats.last_change_at else '—' }}
+          </div>
+        </div>
+      </div>
+      {% if stats.changes_rejected_recent or stats.changes_failed_recent %}
+      <div class="alert alert-warning mt-3 mb-0" role="alert">
+        Часть обновлений завершилась ошибкой или была отклонена. Проверьте этапы: некоторые действия могли выполниться.
+        Причины в <a href="/admin/document-change-log/list">журнале изменений</a>.
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>

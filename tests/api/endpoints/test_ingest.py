@@ -11,14 +11,16 @@ from app.models.schemas import MAX_RAW_TEXT_LENGTH, IngestResponse
 from app.services.ingestion import IngestionService
 
 VALID_PAYLOAD = {
-    'document_id': 'fz-181-art21',
     'category': 'labor_code',
-    'raw_text': 'Текст статьи 21 ФЗ-181.',
-    'source_title': 'ФЗ-181, Статья 21',
+    'act_type': 'Кодекс Российской Федерации',
+    'act_number': '197-ФЗ',
+    'act_date': '2001-12-30',
+    'act_title': 'Трудовой кодекс Российской Федерации',
+    'source_title': 'Трудовой кодекс Российской Федерации',
+    'revision_date': '2026-01-01',
+    'raw_text': 'Текст статьи 21.',
     'audience': 'both',
     'topics': [],
-    'version': '2026-01-01',
-    'effective_date': '2026-01-01',
 }
 
 

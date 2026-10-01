@@ -12,8 +12,14 @@ from app.clients.embeddings import EmbeddingClient
 from app.clients.llm import LlmClient
 from app.db.models.document import Document
 from app.exceptions.ingestion import TopicsNotAllowedForCategoryError
-from app.models.schemas import ChunkEnrichmentResult, DocumentMetadataInput, SectionUpdateRequest
+from app.models.schemas import (
+    ChunkEnrichmentResult,
+    DocumentMetadataInput,
+    IngestRequest,
+    SectionUpdateRequest,
+)
 from app.repositories.document import DocumentRepository
+from app.repositories.document_change_log import DocumentChangeLogRepository
 from app.services.ingestion import IngestionService
 from app.vectorstore.qdrant_client import QdrantVectorStore
 from tests.conftest import make_test_qdrant_client
@@ -50,6 +56,8 @@ def make_ingestion_service(vector_store: QdrantVectorStore, db_session) -> Inges
         embedding_client=fake_embedding_client,
         vector_store=vector_store,
         document_repository=DocumentRepository(db_session),
+        change_log_repository=DocumentChangeLogRepository(db_session),
+        legal_sync_client=None,
     )
 
 
@@ -66,6 +74,33 @@ def make_document_metadata(version: str = '2026-01-01') -> DocumentMetadataInput
     )
 
 
+def make_ingest_request(
+    document_id: str,
+    raw_text: str,
+    category: str = 'federal_law',
+    version: str = '2026-01-01',
+    topics: list[str] | None = None,
+) -> IngestRequest:
+    """Карточка документа для ingestion.
+
+    `document_id` задаётся явно: тесты изолируются друг от друга уникальным
+    идентификатором, а выводимый из реквизитов был бы одинаковым для всех.
+    """
+    return IngestRequest(
+        document_id=document_id,
+        category=category,
+        act_type='Федеральный закон' if category != 'other_npa' else 'Постановление Правительства Российской Федерации',
+        act_number='181-ФЗ' if category != 'other_npa' else '845',
+        act_date=date(1995, 11, 24),
+        act_title='О социальной защите инвалидов в Российской Федерации',
+        source_title='Федеральный закон «О социальной защите инвалидов в Российской Федерации» от 24 ноября 1995 N 181-ФЗ',
+        revision_date=date.fromisoformat(version),
+        raw_text=raw_text,
+        audience='both',
+        topics=topics or [],
+    )
+
+
 def make_words(count: int, prefix: str) -> str:
     return ' '.join(f'{prefix}{index}' for index in range(count))
 
@@ -75,8 +110,7 @@ def make_section_update_request(raw_text: str, version: str) -> SectionUpdateReq
         category='labor_code',
         raw_text=raw_text,
         section_title='Статья 128. Отпуск без сохранения заработной платы',
-        version=version,
-        effective_date=date.fromisoformat(version),
+        revision_date=date.fromisoformat(version),
         source_title='Трудовой кодекс Российской Федерации',
         audience='both',
         topics=[],
@@ -92,15 +126,21 @@ async def test_ingest_document_does_not_duplicate_chunks_on_repeated_call_with_s
     document_metadata = make_document_metadata()
 
     await service.ingest_document(
-        document_id=document_id, raw_text='Текст документа про квоту.', category='federal_law',
-        document_metadata=document_metadata,
-    )
+            request=make_ingest_request(
+                document_id=document_id, raw_text='Текст документа про квоту.',
+                category='federal_law', version=document_metadata.version,
+                topics=document_metadata.topics,
+            )
+        )
     first_chunks = await vector_store.list_chunks(document_id)
 
     await service.ingest_document(
-        document_id=document_id, raw_text='Текст документа про квоту.', category='federal_law',
-        document_metadata=document_metadata,
-    )
+            request=make_ingest_request(
+                document_id=document_id, raw_text='Текст документа про квоту.',
+                category='federal_law', version=document_metadata.version,
+                topics=document_metadata.topics,
+            )
+        )
     second_chunks = await vector_store.list_chunks(document_id)
 
     assert len(second_chunks) == len(first_chunks)
@@ -120,8 +160,11 @@ async def test_ingest_document_raises_when_topics_set_for_disallowed_category(ve
 
     with pytest.raises(TopicsNotAllowedForCategoryError):
         await service.ingest_document(
-            document_id=f'doc-{uuid4().hex}', raw_text='Текст документа.', category='federal_law',
-            document_metadata=document_metadata,
+            request=make_ingest_request(
+                document_id=f'doc-{uuid4().hex}', raw_text='Текст документа.',
+                category='federal_law', version=document_metadata.version,
+                topics=document_metadata.topics,
+            )
         )
 
 
@@ -134,9 +177,12 @@ async def test_ingest_document_allows_topics_for_other_npa(vector_store, db_sess
     )
 
     await service.ingest_document(
-        document_id=document_id, raw_text='Текст постановления.', category='other_npa',
-        document_metadata=document_metadata,
-    )
+            request=make_ingest_request(
+                document_id=document_id, raw_text='Текст постановления.',
+                category='other_npa', version=document_metadata.version,
+                topics=document_metadata.topics,
+            )
+        )
 
     chunks = await vector_store.list_chunks(document_id)
     assert chunks
@@ -152,8 +198,7 @@ async def test_ingest_section_raises_when_topics_set_for_disallowed_category(vec
         category='labor_code',
         raw_text=make_words(20, 'слово'),
         section_title='Статья 128. Отпуск без сохранения заработной платы',
-        version='2026-01-01',
-        effective_date=date(2026, 1, 1),
+        revision_date=date(2026, 1, 1),
         source_title='ТК РФ',
         audience='both',
         topics=['увольнение'],
@@ -181,9 +226,12 @@ async def test_ingest_document_concurrent_calls_same_document_same_version_do_no
         async with session_factory() as session:
             service = make_ingestion_service(vector_store, session)
             await service.ingest_document(
-                document_id=document_id, raw_text='Текст документа про квоту.', category='federal_law',
-                document_metadata=document_metadata,
+            request=make_ingest_request(
+                document_id=document_id, raw_text='Текст документа про квоту.',
+                category='federal_law', version=document_metadata.version,
+                topics=document_metadata.topics,
             )
+        )
 
     await asyncio.gather(run(), run())
 
@@ -203,8 +251,10 @@ async def test_ingest_document_concurrent_calls_different_versions_leave_exactly
         async with session_factory() as session:
             service = make_ingestion_service(vector_store, session)
             await service.ingest_document(
-                document_id=document_id, raw_text=raw_text, category='federal_law',
-                document_metadata=make_document_metadata(version=version),
+                request=make_ingest_request(
+                    document_id=document_id, raw_text=raw_text,
+                    category='federal_law', version=version,
+                )
             )
 
     await asyncio.gather(

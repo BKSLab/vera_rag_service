@@ -6,6 +6,7 @@ from markupsafe import Markup, escape
 from pydantic import ValidationError
 from sqladmin import BaseView, ModelView, expose
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.requests import Request
 
 from app.admin.csrf import get_or_create_csrf_token, verify_csrf_token
@@ -13,12 +14,24 @@ from app.admin.dashboard import get_dashboard_stats
 from app.admin.services import build_documents_service, build_ingestion_service, build_search_service
 from app.core.config_logger import logger
 from app.db.models.document import Document
+from app.db.models.document_change_log import (
+    CHANGE_APPLIED,
+    CHANGE_FAILED,
+    CHANGE_REJECTED,
+    DocumentChangeLog,
+)
+from app.db.models.ingestion_run import IngestionRun
 from app.db.models.search_log import SearchLog
 from app.db.models.topic import Topic
 from app.db.session import async_session_factory
 from app.dependencies.vectorstore import get_vector_store
 from app.exceptions.embedding import EmbeddingApiRequestError
-from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError
+from app.exceptions.ingestion import (
+    RawTextTooLargeError,
+    StaleRevisionError,
+    TooManyChunksError,
+    TopicsNotAllowedForCategoryError,
+)
 from app.exceptions.llm import LlmApiRequestError
 from app.ingestion.extract import (
     MAX_UPLOAD_SIZE_BYTES,
@@ -27,7 +40,19 @@ from app.ingestion.extract import (
     extract_text_from_upload,
 )
 from app.models.metadata import CATEGORY_LABELS, Audience, Category
-from app.models.schemas import TOPICS_ALLOWED_CATEGORIES, DocumentMetadataInput, SearchFilters
+from app.models.requisites import (
+    ACT_TYPES_BY_CATEGORY,
+    requisites_required,
+    revision_applicable,
+)
+from app.models.schemas import (
+    REQUIRED_NUMBER_SUFFIX_BY_CATEGORY,
+    TOPICS_ALLOWED_CATEGORIES,
+    IngestRequest,
+    SearchFilters,
+)
+from app.services.ingestion_history import run_view
+from app.services.ingestion_journal import STATUS_LABELS
 
 SEARCH_TEST_TOP_K = 5
 
@@ -107,7 +132,115 @@ def _document_id_link(model: Document) -> Markup:
     Qdrant (`DocumentChunksView`) — без этого нет способа увидеть реальный
     проиндексированный текст, а не только метаданные реестра."""
     query = urlencode({'document_id': model.document_id, 'version': model.version})
-    return Markup(f'<a href="/admin/document-chunks?{query}">{escape(model.document_id)}</a>')
+    history = urlencode({'document_id': model.document_id})
+    return Markup(f'<a href="/admin/document-chunks?{escape(query)}">{escape(model.document_id)}</a>'
+                  f'<div><a href="/admin/ingestion-log?{escape(history)}">История обновлений</a></div>')
+
+
+def build_ingest_request(form: Any, category: str, raw_text: str) -> IngestRequest:
+    """Собирает `IngestRequest` из полей формы карточки загрузки.
+
+    Форма отдаёт только то, что показано оператору для выбранной категории:
+    у авторских материалов нет вида акта и номера, у судебной практики нет
+    действующей редакции. Недостающие поля приходят пустыми, а не выдуманными.
+
+    Args:
+        form: Разобранное тело формы.
+        category: Проверенная категория источника.
+        raw_text: Текст, извлечённый из загруженного файла.
+
+    Returns:
+        Провалидированный запрос на индексацию.
+
+    Raises:
+        ValidationError: Реквизиты не соответствуют правилам категории.
+    """
+    return IngestRequest(
+        category=category,
+        act_type=_optional_form_value(form, 'act_type'),
+        act_number=_optional_form_value(form, 'act_number'),
+        act_date=form.get('act_date'),
+        act_title=form.get('act_title', ''),
+        act_authority=_optional_form_value(form, 'act_authority'),
+        source_title=form.get('source_title', ''),
+        revision_date=_optional_form_value(form, 'revision_date'),
+        document_id=_optional_form_value(form, 'document_id'),
+        raw_text=raw_text,
+        audience=form.get('audience'),
+        topics=form.getlist('topics'),
+    )
+
+
+def _change_status_badge(model: DocumentChangeLog) -> Markup:
+    """Красит исход попытки: неприменённое изменение должно быть видно
+    при беглом просмотре списка, а не вычитываться из колонки текстом."""
+    colors = {CHANGE_APPLIED: 'green', CHANGE_REJECTED: 'orange', CHANGE_FAILED: 'red'}
+    color = colors.get(model.status, 'secondary')
+    return Markup(f'<span class="badge bg-{color}-lt">{escape(model.status)}</span>')
+
+
+def _optional_form_value(form: Any, name: str) -> str | None:
+    """Возвращает значение поля формы или `None`, если оно пустое.
+
+    Пустая строка из HTML-формы и «значение не задано» — разные вещи для
+    Pydantic: без этого пустое необязательное поле упало бы на валидации типа.
+    """
+    value = form.get(name)
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+class DocumentChangeLogAdmin(ModelView, model=DocumentChangeLog):
+    """Журнал изменений документов БЗ — что и когда переиндексировано.
+
+    Только чтение: журнал фиксирует состоявшиеся факты, редактировать его
+    задним числом нельзя. Записи появляются при каждой попытке гранулярного
+    обновления статьи из Legal Sync Service — и применённой, и отклонённой.
+
+    Это единственное место, где видно, что сервис синхронизации присылал:
+    сам он живёт отдельно, и без журнала неприменённое изменение выглядело бы
+    так же, как отсутствие изменений.
+    """
+
+    name = 'Изменение'
+    name_plural = 'Журнал изменений'
+    icon = 'fa-solid fa-clock-rotate-left'
+
+    column_list = [
+        DocumentChangeLog.id, DocumentChangeLog.created_at, DocumentChangeLog.status,
+        DocumentChangeLog.document_id, DocumentChangeLog.section_number,
+        DocumentChangeLog.section_title, DocumentChangeLog.category, DocumentChangeLog.version,
+        DocumentChangeLog.revision_date, DocumentChangeLog.amending_act_type,
+        DocumentChangeLog.amending_act_number, DocumentChangeLog.amending_act_date,
+        DocumentChangeLog.chunks_count, DocumentChangeLog.superseded_chunks,
+        DocumentChangeLog.error,
+    ]
+    # Статус в поиске — чтобы отобрать неприменённые изменения запросом
+    # `rejected`/`failed`: именно они требуют реакции оператора.
+    column_searchable_list = [
+        DocumentChangeLog.document_id, DocumentChangeLog.section_number, DocumentChangeLog.status,
+    ]
+    column_sortable_list = [
+        DocumentChangeLog.status,
+        DocumentChangeLog.document_id,
+        DocumentChangeLog.revision_date,
+        DocumentChangeLog.created_at,
+    ]
+    column_default_sort = [(DocumentChangeLog.created_at, True)]
+    column_formatters = {
+        DocumentChangeLog.status: lambda model, attr: _change_status_badge(model),
+        DocumentChangeLog.document_id: lambda model, attr: _document_id_link(model),
+    }
+    column_formatters_detail = {
+        DocumentChangeLog.status: lambda model, attr: _change_status_badge(model),
+        DocumentChangeLog.document_id: lambda model, attr: _document_id_link(model),
+    }
+
+    can_create = False
+    can_edit = False
+    can_delete = False
 
 
 class DocumentAdmin(ModelView, model=Document):
@@ -120,12 +253,14 @@ class DocumentAdmin(ModelView, model=Document):
     icon = 'fa-solid fa-file-lines'
 
     column_list = [
-        Document.id, Document.document_id, Document.version, Document.category,
+        Document.id, Document.document_id, Document.category, Document.act_type,
+        Document.act_number, Document.act_date, Document.act_title,
+        Document.act_authority, Document.revision_date, Document.version,
         Document.source_title, Document.audience, Document.topics,
-        Document.effective_date, Document.is_active, Document.created_at,
+        Document.is_active, Document.created_at,
     ]
     column_searchable_list = [Document.document_id, Document.source_title]
-    column_sortable_list = [Document.document_id, Document.effective_date, Document.created_at]
+    column_sortable_list = [Document.document_id, Document.act_date, Document.revision_date, Document.created_at]
     column_default_sort = [(Document.created_at, True)]
     column_formatters = {Document.document_id: lambda model, attr: _document_id_link(model)}
     column_formatters_detail = {Document.document_id: lambda model, attr: _document_id_link(model)}
@@ -200,6 +335,16 @@ class DocumentUploadView(BaseView):
             'category_labels': CATEGORY_LABELS,
             'topic_names': topic_names,
             'topics_allowed_categories': sorted(TOPICS_ALLOWED_CATEGORIES),
+            'act_types_by_category': {
+                category: list(types) for category, types in ACT_TYPES_BY_CATEGORY.items()
+            },
+            'requisites_categories': [
+                category for category in get_args(Category) if requisites_required(category)
+            ],
+            'revision_categories': [
+                category for category in get_args(Category) if revision_applicable(category)
+            ],
+            'required_number_suffix': REQUIRED_NUMBER_SUFFIX_BY_CATEGORY,
             'csrf_token': get_or_create_csrf_token(request),
         }
 
@@ -228,32 +373,27 @@ class DocumentUploadView(BaseView):
                 raise ValueError(f'Недопустимая категория: {category!r}.')
 
             raw_text = extract_text_from_upload(upload.filename, await upload.read())
-            document_metadata = DocumentMetadataInput(
-                source_title=form.get('source_title', ''),
-                audience=form.get('audience'),
-                topics=form.getlist('topics'),
-                version=form.get('version', ''),
-                effective_date=form.get('effective_date'),
-            )
+            ingest_request = build_ingest_request(form, category, raw_text)
+            context['history_url'] = '/admin/ingestion-log?' + urlencode({'document_id': ingest_request.document_id})
 
             async with build_ingestion_service() as ingestion_service:
-                result = await ingestion_service.ingest_document(
-                    document_id=form.get('document_id', ''),
-                    raw_text=raw_text,
-                    category=category,
-                    document_metadata=document_metadata,
-                )
+                result = await ingestion_service.ingest_document(request=ingest_request)
+            context['operation_id'] = result.operation_id
+            context['warnings'] = result.warnings
             context['success'] = (
                 f"Документ «{result.document_id}» (версия {result.version}) проиндексирован: "
                 f'{result.chunks_count} чанков. Замещено версий: {len(result.replaced_versions)}.'
             )
         except (
             ValueError, UnsupportedFileTypeError, ValidationError,
-            RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError,
+            RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError, StaleRevisionError,
         ) as error:
             context['error'] = str(error)
         except (LlmApiRequestError, EmbeddingApiRequestError) as error:
             context['error'] = str(error)
+        except Exception:
+            logger.exception('Ошибка загрузки документа через админку.')
+            context['error'] = 'Обработка завершилась ошибкой. Откройте историю обновлений для проверки этапов.'
 
         return await self.templates.TemplateResponse(request, 'document_upload.html', context)
 
@@ -349,4 +489,16 @@ class DashboardView(BaseView):
     async def dashboard(self, request: Request) -> Any:
         async with async_session_factory() as db_session:
             stats = await get_dashboard_stats(db_session, get_vector_store())
-        return await self.templates.TemplateResponse(request, 'dashboard.html', {'stats': stats})
+        recent_runs, ingestion_log_error = [], None
+        if stats.postgres_ok:
+            try:
+                async with async_session_factory() as db_session:
+                    recent_runs = [run_view(row) for row in (await db_session.scalars(
+                        select(IngestionRun).order_by(IngestionRun.started_at.desc()).limit(5)
+                    )).all()]
+            except (SQLAlchemyError, OSError):
+                ingestion_log_error = 'Журнал обновлений временно недоступен.'
+        return await self.templates.TemplateResponse(request, 'dashboard.html', {
+            'stats': stats, 'recent_runs': recent_runs, 'run_status_labels': STATUS_LABELS,
+            'ingestion_log_error': ingestion_log_error,
+        })

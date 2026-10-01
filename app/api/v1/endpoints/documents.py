@@ -5,7 +5,7 @@ from app.core.rate_limit import limiter
 from app.dependencies.auth import VerifyApiKeyDep
 from app.dependencies.services import DocumentsServiceDep, IngestionServiceDep
 from app.exceptions.embedding import EmbeddingApiRequestError
-from app.exceptions.ingestion import TopicsNotAllowedForCategoryError
+from app.exceptions.ingestion import StaleRevisionError, TopicsNotAllowedForCategoryError
 from app.exceptions.llm import LlmApiRequestError
 from app.models.schemas import DocumentDeletedResponse, SectionUpdateRequest, SectionUpdateResponse
 
@@ -52,6 +52,7 @@ async def delete_document(request: Request, document_id: str, service: Documents
         'помечаются is_actual=False с effective_until для поддержки будущих запросов "на дату X".'
     ),
     operation_id='updateSection',
+    responses={409: {'description': 'В RAG уже есть более поздняя редакция статьи.'}},
     response_model=SectionUpdateResponse,
 )
 @limiter.limit('10/minute')
@@ -83,6 +84,8 @@ async def update_section(
     )
     try:
         result = await service.ingest_section(document_id, section_number, data)
+    except StaleRevisionError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.detail) from error
     except (ValueError, TopicsNotAllowedForCategoryError) as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     except (LlmApiRequestError, EmbeddingApiRequestError) as error:

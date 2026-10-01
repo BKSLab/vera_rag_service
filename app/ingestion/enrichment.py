@@ -5,6 +5,7 @@ from app.clients.llm import LlmClient
 from app.core.config_logger import logger
 from app.ingestion.prompts.enrichment import CHUNK_ENRICHMENT_PROMPT
 from app.models.schemas import Chunk, ChunkEnrichmentResult, DocumentMetadataInput, EnrichedChunk
+from app.services.ingestion_journal import chunk_completed
 
 # Ingestion — офлайн-процесс, не в hot path поиска (RAG_SERVICE_PLAN.md,
 # раздел 4 «Зависимости и риски»), но конкурентные вызовы LLM всё равно
@@ -104,7 +105,9 @@ async def enrich_chunks(
 
     async def _enrich_with_limit(chunk: Chunk) -> EnrichedChunk:
         async with semaphore:
-            return await enrich_chunk(llm_client, chunk, document_metadata)
+            result = await enrich_chunk(llm_client, chunk, document_metadata)
+            chunk_completed('enrichment')
+            return result
 
     logger.info('🤖 Обогащение %d чанков (конкурентность: %d).', len(chunks), ENRICHMENT_CONCURRENCY)
     results = await asyncio.gather(*(_enrich_with_limit(chunk) for chunk in chunks), return_exceptions=True)

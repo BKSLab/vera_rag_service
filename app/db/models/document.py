@@ -33,7 +33,31 @@ class Document(Base):
     topics: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, comment='Темы документа (раздел 3 плана) — пусто для labor_code/federal_law.',
     )
-    effective_date: Mapped[date] = mapped_column(Date, nullable=False, comment='Дата вступления редакции в силу.')
+    act_type: Mapped[str | None] = mapped_column(
+        String(length=120), nullable=True, comment='Вид акта; отсутствует у авторских материалов.',
+    )
+    act_number: Mapped[str | None] = mapped_column(
+        String(length=100), nullable=True, comment='Номер акта; отсутствует у авторских материалов.',
+    )
+    act_date: Mapped[date] = mapped_column(
+        Date, nullable=False, comment='Дата акта: подписания для правовых актов, публикации для авторских.',
+    )
+    act_title: Mapped[str] = mapped_column(
+        Text, nullable=False, comment='Наименование акта без реквизитов.',
+    )
+    act_authority: Mapped[str | None] = mapped_column(
+        String(length=255), nullable=True, comment='Принявший (подписавший) орган.',
+    )
+    revision_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+        comment=(
+            'Дата действующей редакции акта на момент этой загрузки. Постатейные обновления '
+            'её не двигают: строка реестра описывает состоявшуюся загрузку, а что менялось '
+            'потом — отвечает document_change_log. Не применяется к судебной практике и '
+            'авторским материалам.'
+        ),
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment='Признак активной (актуальной) версии — неактивные хранятся для аудита.')
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, comment='Момент успешного ingestion этой версии.'

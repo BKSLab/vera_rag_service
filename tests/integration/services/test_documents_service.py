@@ -46,7 +46,10 @@ async def test_delete_document_removes_chunks_and_registry_row(vector_store, db_
         Document(
             document_id=document_id, version='2026-01-01', category='labor_code',
             source_title='Источник', audience='both', topics=['quota'],
-            effective_date=date(2026, 1, 1), is_active=True,
+            act_type='Кодекс Российской Федерации', act_number='197-ФЗ',
+            act_date=date(2001, 12, 30), act_title='Трудовой кодекс Российской Федерации',
+            act_authority='Президент Российской Федерации',
+            revision_date=date(2026, 1, 1), is_active=True,
         )
     )
     embedded_chunk = make_embedded_chunk(document_id)

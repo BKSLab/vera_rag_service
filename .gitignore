@@ -225,3 +225,7 @@ PROD_DIAGNOSTICS_RUNBOOK.md
 
 # Локальный read-only клиент production Postgres.
 scripts/prod_db_query.py
+
+# Серверные резервные копии и сведения о текущем развёртывании.
+backups/
+.deployed-release.json

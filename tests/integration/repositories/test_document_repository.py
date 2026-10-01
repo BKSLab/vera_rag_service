@@ -15,7 +15,12 @@ async def test_save_document_persists_all_fields(db_session):
         source_title='ФЗ-181, Статья 21',
         audience='both',
         topics=['quota'],
-        effective_date=date(2026, 1, 1),
+        act_type='Федеральный закон',
+        act_number='181-ФЗ',
+        act_date=date(1995, 11, 24),
+        act_title='О социальной защите инвалидов в Российской Федерации',
+        act_authority='Президент Российской Федерации',
+        revision_date=date(2026, 1, 1),
         is_active=True,
     )
 
@@ -34,11 +39,17 @@ async def test_mark_versions_inactive_updates_only_given_versions(db_session):
     repository = DocumentRepository(db_session)
     old_version = Document(
         document_id='fz-181-art21', version='2025-01-01', category='federal_law',
-        source_title='ФЗ-181', audience='both', topics=['quota'], effective_date=date(2025, 1, 1), is_active=True,
+        source_title='ФЗ-181', audience='both', topics=['quota'],
+        act_type='Федеральный закон', act_number='181-ФЗ', act_date=date(1995, 11, 24),
+        act_title='О социальной защите инвалидов', act_authority='Президент Российской Федерации',
+        revision_date=date(2025, 1, 1), is_active=True,
     )
     new_version = Document(
         document_id='fz-181-art21', version='2026-01-01', category='federal_law',
-        source_title='ФЗ-181', audience='both', topics=['quota'], effective_date=date(2026, 1, 1), is_active=True,
+        source_title='ФЗ-181', audience='both', topics=['quota'],
+        act_type='Федеральный закон', act_number='181-ФЗ', act_date=date(1995, 11, 24),
+        act_title='О социальной защите инвалидов', act_authority='Президент Российской Федерации',
+        revision_date=date(2026, 1, 1), is_active=True,
     )
     await repository.save_document(old_version)
     await repository.save_document(new_version)
@@ -62,7 +73,12 @@ async def test_save_document_upserts_same_document_version(db_session):
             source_title='Старое название',
             audience='both',
             topics=['quota'],
-            effective_date=date(2026, 1, 1),
+            act_type='Федеральный закон',
+            act_number='181-ФЗ',
+            act_date=date(1995, 11, 24),
+            act_title='Старое название',
+            act_authority='Президент Российской Федерации',
+            revision_date=date(2026, 1, 1),
             is_active=False,
         )
     )
@@ -75,7 +91,12 @@ async def test_save_document_upserts_same_document_version(db_session):
             source_title='Новое название',
             audience='employer',
             topics=['workplace'],
-            effective_date=date(2026, 2, 1),
+            act_type='Кодекс Российской Федерации',
+            act_number='197-ФЗ',
+            act_date=date(2001, 12, 30),
+            act_title='Новое название',
+            act_authority='Президент Российской Федерации',
+            revision_date=date(2026, 2, 1),
             is_active=True,
         )
     )
@@ -92,7 +113,9 @@ async def test_save_document_upserts_same_document_version(db_session):
     assert rows_count == 1
     assert saved.category == 'labor_code'
     assert saved.source_title == 'Новое название'
+    assert saved.act_title == 'Новое название'
+    assert saved.act_number == '197-ФЗ'
     assert saved.audience == 'employer'
     assert saved.topics == ['workplace']
-    assert saved.effective_date == date(2026, 2, 1)
+    assert saved.revision_date == date(2026, 2, 1)
     assert saved.is_active is True

@@ -1,0 +1,29 @@
+{% extends "sqladmin/layout.html" %}
+{% block content %}
+<div class="col-12"><div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ history_url }}">Все попытки документа</a><a class="btn btn-outline-primary" href="{{ chunks_url }}">Чанки в коллекции</a>{% if sync_url %}<a class="btn btn-outline-primary" href="{{ sync_url }}">Вся цепочка в Legal Sync</a>{% endif %}<a class="btn btn-outline-primary" href="?format=json">JSON</a><a class="btn btn-outline-primary" href="{{ request.url.path }}">Обновить</a></div></div>
+<div class="col-12"><div class="card"><div class="card-body">
+  <div class="text-muted">{{ 'Обновление статьи ' ~ run.section_number if run.kind == 'section' else 'Загрузка документа' }}</div>
+  <h2>{{ run.source_title }}</h2><p><strong>{{ status_labels[run.display_status] }}</strong> · {{ run.duration_seconds }} с · {{ run.document_id }}</p>
+  <dl class="row mb-0"><dt class="col-sm-3">Редакция / коллекция</dt><dd class="col-sm-9">{{ run.version }} / {{ run.collection_name }}</dd><dt class="col-sm-3">Операция RAG</dt><dd class="col-sm-9 text-break">{{ run.id }}</dd><dt class="col-sm-3">Попытка отправки / Request ID</dt><dd class="col-sm-9 text-break">{{ run.request_id or '—' }}</dd><dt class="col-sm-3">Изменение в Legal Sync</dt><dd class="col-sm-9">{{ run.change_id or '—' }}</dd><dt class="col-sm-3">Начало / последнее событие (UTC)</dt><dd class="col-sm-9">{{ run.started_at.strftime('%d.%m.%Y %H:%M:%S') }} / {{ run.updated_at.strftime('%d.%m.%Y %H:%M:%S') }}</dd></dl>
+  {% if run.display_status == 'stalled' %}<div class="alert alert-warning mt-3">Более минуты нет сигнала от обработчика. Исход неизвестен: проверьте состояние сервиса и коллекции перед повторной отправкой.</div>{% endif %}
+  {% if run.error %}<div class="alert alert-danger mt-3 text-break">{{ run.error }}</div>{% endif %}
+  {% if run.status in ['failed','interrupted'] %}<p class="text-muted">Часть действий могла уже выполниться. Этапы ниже показывают последнее подтверждённое состояние; ошибка не означает автоматический откат коллекции.</p>{% endif %}
+</div></div></div>
+{% for step in run.stages %}
+<div class="col-12"><div class="card"><div class="card-body">
+  <div class="d-flex flex-wrap justify-content-between gap-2"><h3 class="mb-1">{{ loop.index }}. {{ stage_labels.get(step.key, step.key) }}</h3><span>{{ status_labels.get(step.status, step.status) }}{% if step.duration_seconds is defined %} · {{ step.duration_seconds }} с{% endif %}</span></div>
+  {% if step.details.total %}<p class="mb-2">Обработано чанков: {{ step.details.completed or 0 }} / {{ step.details.total }}</p><progress style="width:100%" value="{{ step.details.completed or 0 }}" max="{{ step.details.total }}"></progress>{% endif %}
+  {% if step.reason %}<p class="text-muted mb-0">{{ step.reason }}</p>{% endif %}
+  {% if step.error %}<div class="text-danger text-break">{{ step.error }}</div>{% endif %}
+  {% for warning in step.warnings or [] %}<div class="text-warning text-break">{{ warning }}</div>{% endfor %}
+  {% if step.details %}<details class="mt-2"><summary>Данные этапа</summary><pre class="mt-2" style="white-space:pre-wrap;overflow-wrap:anywhere">{{ step.details | tojson(indent=2) }}</pre></details>{% endif %}
+</div></div></div>
+{% endfor %}
+<div class="col-12"><div class="card"><div class="card-body"><h3>Результат</h3>
+{% if run.result.chunks_count is defined %}<p>Записано чанков: <strong>{{ run.result.chunks_count }}</strong>{% if run.result.superseded_chunks is defined %} · Снято с актуальности: <strong>{{ run.result.superseded_chunks }}</strong>{% endif %}</p>{% endif %}
+<p>Длина входного текста: {{ run.result.input_characters }} символов</p>
+<p class="text-break">Контрольная сумма текста (SHA-256): <code>{{ run.result.input_sha256 }}</code></p>
+<details><summary>Технические данные результата</summary><pre class="mt-2" style="white-space:pre-wrap;overflow-wrap:anywhere">{{ run.result | tojson(indent=2) }}</pre></details>
+</div></div></div>
+{% if run.status == 'running' %}<script>window.setTimeout(function () { if (!document.hidden && !document.querySelector('details[open]')) window.location.reload(); }, 10000);</script>{% endif %}
+{% endblock %}

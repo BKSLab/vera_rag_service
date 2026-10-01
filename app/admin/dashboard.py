@@ -7,6 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.reconciliation import find_active_documents_missing_in_qdrant
 from app.db.models.document import Document
+from app.db.models.document_change_log import (
+    CHANGE_APPLIED,
+    CHANGE_FAILED,
+    CHANGE_REJECTED,
+    DocumentChangeLog,
+)
 from app.db.models.search_log import SearchLog
 from app.vectorstore.qdrant_client import QdrantVectorStore
 
@@ -46,6 +52,15 @@ class DashboardStats:
     avg_latency_hybrid_search_ms: float | None
     avg_latency_rerank_ms: float | None
     last_search_at: datetime | None
+    changes_applied_recent: int
+    changes_rejected_recent: int
+    changes_failed_recent: int
+    last_change_at: datetime | None
+    """Сводка по журналу изменений за то же окно: что прислал сервис
+    синхронизации и чем это кончилось. Отказы вынесены отдельно — по общему
+    счётчику неудачную синхронизацию не отличить от удачной, а тишина в
+    журнале неотличима от того, что присылать было нечего."""
+
     reconciliation_mismatches: list[tuple[str, str]] | None
     """ING-5 — активные версии реестра без чанков в Qdrant. `None`, если
     сверка пропущена (Postgres/Qdrant недоступны или слишком много активных
@@ -64,6 +79,8 @@ async def get_dashboard_stats(db_session: AsyncSession, vector_store: QdrantVect
     search_logs_total = 0
     avg_expansion = avg_embed = avg_hybrid = avg_rerank = None
     last_search_at = None
+    changes_applied_recent = changes_rejected_recent = changes_failed_recent = 0
+    last_change_at = None
 
     try:
         documents_total = (await db_session.execute(select(func.count()).select_from(Document))).scalar_one()
@@ -87,6 +104,22 @@ async def get_dashboard_stats(db_session: AsyncSession, vector_store: QdrantVect
                 ).where(SearchLog.created_at >= recent_window_start)
             )
         ).one()
+
+        change_counts = dict(
+            (
+                await db_session.execute(
+                    select(DocumentChangeLog.status, func.count())
+                    .where(DocumentChangeLog.created_at >= recent_window_start)
+                    .group_by(DocumentChangeLog.status)
+                )
+            ).all()
+        )
+        changes_applied_recent = change_counts.get(CHANGE_APPLIED, 0)
+        changes_rejected_recent = change_counts.get(CHANGE_REJECTED, 0)
+        changes_failed_recent = change_counts.get(CHANGE_FAILED, 0)
+        last_change_at = (
+            await db_session.execute(select(func.max(DocumentChangeLog.created_at)))
+        ).scalar_one()
     # `OSError` — не избыточность рядом с `SQLAlchemyError`: при полностью
     # недоступном Postgres asyncpg роняет сокет-ошибку (`ConnectionRefusedError`
     # и родня) на этапе установки соединения, и SQLAlchemy её не заворачивает в
@@ -127,5 +160,9 @@ async def get_dashboard_stats(db_session: AsyncSession, vector_store: QdrantVect
         avg_latency_hybrid_search_ms=avg_hybrid,
         avg_latency_rerank_ms=avg_rerank,
         last_search_at=last_search_at,
+        changes_applied_recent=changes_applied_recent,
+        changes_rejected_recent=changes_rejected_recent,
+        changes_failed_recent=changes_failed_recent,
+        last_change_at=last_change_at,
         reconciliation_mismatches=reconciliation_mismatches,
     )

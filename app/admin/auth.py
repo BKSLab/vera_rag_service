@@ -18,7 +18,8 @@ class AdminLoginAuth(AuthenticationBackend):
         super().__init__(secret_key=secret_key)
         # ADM-7 — явный `https_only` для cookie сессии вместо дефолтного
         # `SessionMiddleware` без него (sqladmin сам не выставляет этот флаг).
-        self.middlewares = [Middleware(SessionMiddleware, secret_key=secret_key, https_only=https_only)]
+        self.middlewares = [Middleware(SessionMiddleware, secret_key=secret_key, https_only=https_only,
+                                       session_cookie='vera_rag_admin')]
 
     @limiter.limit('5/minute')
     async def login(self, request: Request) -> bool:

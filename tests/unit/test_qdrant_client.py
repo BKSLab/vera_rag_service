@@ -113,3 +113,28 @@ async def test_delete_chunks_uses_exact_point_ids():
 
     selector = client.delete.await_args.kwargs['points_selector']
     assert selector.points == ['chunk-1', 'chunk-2']
+
+
+async def test_document_versions_ignore_archived_redactions():
+    """Полная перезагрузка документа не должна сносить историю редакций.
+
+    Версии из этого списка удаляются после успешного upsert новой, поэтому
+    попадание сюда исторических чанков (`is_actual=False`, с заполненным
+    `effective_until`) означало бы, что первая же полная загрузка стирает
+    архив, который Этап 13 хранит ради запроса «какой текст действовал
+    на дату X».
+    """
+    client = AsyncMock()
+    client.scroll.return_value = (
+        [SimpleNamespace(id='1', payload={'version': '2026-05-25'})],
+        None,
+    )
+    store = QdrantVectorStore(client=client, collection_name='vera_kb', vector_dim=4)
+
+    versions = await store.get_document_versions('tk-197-2001')
+
+    assert versions == ['2026-05-25']
+    assert _filter_values(client.scroll.await_args.kwargs['scroll_filter']) == {
+        'document_id': 'tk-197-2001',
+        'is_actual': True,
+    }

@@ -1,5 +1,6 @@
 {% extends "sqladmin/layout.html" %}
 {% block content %}
+{% if document_id %}<div class="col-12"><a href="/admin/ingestion-log?document_id={{ document_id | urlencode }}">История обновлений документа</a></div>{% endif %}
 {# Каждый блок — отдельный col-12 (см. dashboard.html — `.row-deck > .col`
    у Tabler сжимает несколько блоков в одном col-12 горизонтально). #}
 <div class="col-12">

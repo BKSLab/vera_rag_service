@@ -1,7 +1,13 @@
 from datetime import date
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
-from app.models.schemas import Chunk, DocumentMetadataInput, EmbeddedChunk, EnrichedChunk
+from app.models.schemas import (
+    Chunk,
+    DocumentMetadataInput,
+    EmbeddedChunk,
+    EnrichedChunk,
+    IngestRequest,
+)
 from app.services.ingestion import IngestionService
 
 
@@ -40,21 +46,35 @@ async def test_note_only_chunk_skips_enrichment_and_upsert_while_neighbor_is_ind
         chunk_vector=[0.1, 0.2],
         question_vectors=[],
     )
-    metadata = DocumentMetadataInput(
-        source_title='Федеральный закон № 181-ФЗ',
+    request = IngestRequest(
+        category='labor_code',
+        act_type='Кодекс Российской Федерации',
+        act_number='197-ФЗ',
+        act_date=date(2001, 12, 30),
+        act_title='Трудовой кодекс Российской Федерации',
+        source_title='Трудовой кодекс Российской Федерации',
+        revision_date=date(2026, 1, 1),
+        raw_text='Исходный текст.',
         audience='both',
         topics=[],
-        version='2026-01-01',
-        effective_date=date(2026, 1, 1),
+    )
+    metadata = DocumentMetadataInput(
+        source_title=request.source_title,
+        audience=request.audience,
+        topics=request.topics,
+        version=request.version,
+        effective_date=request.content_date,
     )
     llm_client = AsyncMock()
     embedding_client = AsyncMock()
     vector_store = AsyncMock()
     vector_store.get_document_versions.return_value = []
+    vector_store.get_latest_revision_date.return_value = None
     vector_store.get_document_version_chunk_ids.return_value = []
     vector_store.count_actual_document_chunks.return_value = 1
     vector_store.get_actual_document_chunk_ids.return_value = ['content']
     document_repository = AsyncMock()
+    document_repository.document_lock = MagicMock()
     enrich_mock = AsyncMock(return_value=[enriched_content])
     embed_mock = AsyncMock(return_value=[embedded_content])
     monkeypatch.setattr(
@@ -68,14 +88,11 @@ async def test_note_only_chunk_skips_enrichment_and_upsert_while_neighbor_is_ind
         embedding_client=embedding_client,
         vector_store=vector_store,
         document_repository=document_repository,
+        change_log_repository=AsyncMock(),
+        legal_sync_client=None,
     )
 
-    await service.ingest_document(
-        document_id='fz-181',
-        raw_text='Исходный текст.',
-        category='labor_code',
-        document_metadata=metadata,
-    )
+    await service.ingest_document(request=request)
 
     enrich_mock.assert_awaited_once_with(llm_client, [content_chunk], metadata)
     upserted_chunks = vector_store.upsert_chunks.await_args.args[0]

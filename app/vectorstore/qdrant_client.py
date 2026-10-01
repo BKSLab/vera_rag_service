@@ -75,6 +75,7 @@ def build_chunk_metadata(
         chunk_index=chunk.chunk_index,
         chunk_number_in_section=chunk.chunk_number_in_section,
         version=document_metadata.version,
+        amending_act=document_metadata.amending_act,
         effective_date=document_metadata.effective_date,
         effective_until=None,
         is_actual=True,
@@ -345,17 +346,26 @@ class QdrantVectorStore:
         плана): перед upsert новой версии нужно знать, какие версии уже
         есть в индексе, чтобы удалить их после успешного upsert новой.
 
+        Учитываются только действующие чанки. Исторические редакции статей
+        (`is_actual=False`, с заполненным `effective_until`) Этап 13 хранит
+        специально — ради запроса «какой текст действовал на дату X», — и
+        полная перезагрузка документа не должна их сносить: она заменяет
+        действующий текст, а не переписывает историю.
+
         Args:
             document_id: Идентификатор документа.
 
         Returns:
-            Отсортированный список уникальных версий. Пустой список, если
-            документ ещё не проиндексирован.
+            Отсортированный список уникальных версий действующих чанков.
+            Пустой список, если документ ещё не проиндексирован.
         """
         versions: set[str] = set()
         offset = None
         query_filter = models.Filter(
-            must=[models.FieldCondition(key='document_id', match=models.MatchValue(value=document_id))]
+            must=[
+                models.FieldCondition(key='document_id', match=models.MatchValue(value=document_id)),
+                models.FieldCondition(key='is_actual', match=models.MatchValue(value=True)),
+            ]
         )
 
         while True:
@@ -372,6 +382,40 @@ class QdrantVectorStore:
                 break
 
         return sorted(versions)
+
+    async def get_latest_revision_date(
+        self, document_id: str, parent_id: str | None = None,
+    ) -> date | None:
+        """Самая поздняя дата среди актуальных чанков документа или статьи.
+
+        При незавершённой записи могут быть актуальны две версии. Проверяем
+        все чанки, чтобы даже в этом случае не принять более старый текст.
+        """
+        conditions = [
+            models.FieldCondition(key='document_id', match=models.MatchValue(value=document_id)),
+            models.FieldCondition(key='is_actual', match=models.MatchValue(value=True)),
+        ]
+        if parent_id is not None:
+            conditions.append(
+                models.FieldCondition(key='parent_id', match=models.MatchValue(value=parent_id))
+            )
+        latest: date | None = None
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=models.Filter(must=conditions),
+                limit=256,
+                offset=offset,
+                with_payload=['effective_date'],
+                with_vectors=False,
+            )
+            for point in points:
+                revision_date = date.fromisoformat(point.payload['effective_date'])
+                if latest is None or revision_date > latest:
+                    latest = revision_date
+            if offset is None:
+                return latest
 
     async def count_actual_document_chunks(self, document_id: str, version: str) -> int:
         """Считает поисково-доступные чанки активной версии документа.

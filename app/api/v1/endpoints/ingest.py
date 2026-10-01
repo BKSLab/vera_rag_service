@@ -5,9 +5,15 @@ from app.core.rate_limit import limiter
 from app.dependencies.auth import VerifyApiKeyDep
 from app.dependencies.services import IngestionServiceDep
 from app.exceptions.embedding import EmbeddingApiRequestError
-from app.exceptions.ingestion import RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError
+from app.exceptions.ingestion import (
+    EmptyIngestionContentError,
+    RawTextTooLargeError,
+    StaleRevisionError,
+    TooManyChunksError,
+    TopicsNotAllowedForCategoryError,
+)
 from app.exceptions.llm import LlmApiRequestError
-from app.models.schemas import DocumentMetadataInput, IngestRequest, IngestResponse
+from app.models.schemas import IngestRequest, IngestResponse
 
 router = APIRouter(dependencies=[VerifyApiKeyDep])
 
@@ -29,6 +35,7 @@ router = APIRouter(dependencies=[VerifyApiKeyDep])
             'description': 'Документ проиндексирован.',
             'content': {'application/json': {'example': {'document_id': 'fz-181-art21', 'version': '2026-01-01', 'chunks_count': 3, 'replaced_versions': []}}},
         },
+        409: {'description': 'В RAG уже есть более поздняя редакция документа или его статьи.'},
         422: {'description': 'Невалидная category или пустой текст.'},
         500: {
             'description': 'Ошибка при запросе к LLM-обогащению или Embedding API.',
@@ -51,22 +58,12 @@ async def ingest_document(request: Request, data: IngestRequest, service: Ingest
     """
     logger.info('🚀 Запрос POST /ingest. document_id=%s.', data.document_id)
     try:
-        document_metadata = DocumentMetadataInput(
-            source_title=data.source_title,
-            audience=data.audience,
-            topics=data.topics,
-            version=data.version,
-            effective_date=data.effective_date,
-        )
-        result = await service.ingest_document(
-            document_id=data.document_id,
-            raw_text=data.raw_text,
-            category=data.category,
-            document_metadata=document_metadata,
-        )
+        result = await service.ingest_document(request=data)
         logger.info('✅ Запрос POST /ingest выполнен. document_id=%s.', data.document_id)
         return result
-    except (RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError) as error:
+    except StaleRevisionError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.detail) from error
+    except (RawTextTooLargeError, TooManyChunksError, TopicsNotAllowedForCategoryError, EmptyIngestionContentError) as error:
         logger.warning('⚠️ Документ %s отклонён: %s', data.document_id, error)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     except (LlmApiRequestError, EmbeddingApiRequestError) as error:
