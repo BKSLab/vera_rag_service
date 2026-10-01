@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 from app.core.settings import PolzaSettings, get_settings
@@ -6,6 +8,39 @@ from app.dependencies.clients import (
     get_query_expansion_llm_client,
     get_reranker_llm_client,
 )
+from app.models.schemas import ChunkEnrichmentResult
+
+
+async def test_enrichment_sends_strict_json_schema_to_provider():
+    captured_payload = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payload.update(json.loads(request.content))
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps({
+            'synthetic_title': 'Проверка формата',
+            'hypothetical_questions': ['Кто принимает решение?', 'Куда обратиться?', 'Какие нужны документы?'],
+        })}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as httpx_client:
+        client = get_enrichment_llm_client(httpx_client)
+        result = await client.get_llm_response(
+            content='Фрагмент документа', prompt='Верни JSON.', schema=ChunkEnrichmentResult,
+        )
+
+        assert 'response_format' not in get_query_expansion_llm_client(httpx_client).extra_payload
+        assert 'response_format' not in get_reranker_llm_client(httpx_client).extra_payload
+
+    assert isinstance(result, ChunkEnrichmentResult)
+    response_format = captured_payload['response_format']
+    assert response_format['type'] == 'json_schema'
+    assert response_format['json_schema']['strict'] is True
+    schema = response_format['json_schema']['schema']
+    assert schema['additionalProperties'] is False
+    assert set(schema['required']) == {'synthetic_title', 'hypothetical_questions'}
+    questions = schema['properties']['hypothetical_questions']
+    assert questions['items']['type'] == 'string'
+    assert questions['minItems'] == 3
+    assert questions['maxItems'] == 5
 
 
 async def test_polza_llm_clients_use_separate_temperature_timeout_and_retry_settings():

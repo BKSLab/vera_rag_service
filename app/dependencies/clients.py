@@ -9,6 +9,7 @@ from app.core.circuit_breaker import CircuitBreaker
 from app.core.rate_limiter import RateLimiter
 from app.core.settings import get_settings
 from app.dependencies.http_client import HttpClientDep
+from app.models.schemas import ChunkEnrichmentResult
 
 # LLM-2 (RAG_SERVICE_PLAN.md, раздел 7) — один breaker на
 # провайдера+use-case, не на запрос: должен переживать конкретный
@@ -46,6 +47,8 @@ def get_enrichment_llm_client(httpx_client: HttpClientDep) -> LlmClient:
     пользователей, не обогащения корпуса базы знаний при загрузке.
     """
     settings = get_settings().polza
+    response_schema = ChunkEnrichmentResult.model_json_schema()
+    response_schema['additionalProperties'] = False
     return LlmClient(
         httpx_client=httpx_client,
         model=settings.polza_enrichment_llm_model,
@@ -58,6 +61,16 @@ def get_enrichment_llm_client(httpx_client: HttpClientDep) -> LlmClient:
         timeout=settings.polza_enrichment_timeout_seconds,
         retries=settings.polza_enrichment_retries,
         circuit_breaker=_polza_enrichment_breaker,
+        extra_payload={
+            'response_format': {
+                'type': 'json_schema',
+                'json_schema': {
+                    'name': 'ChunkEnrichmentResult',
+                    'strict': True,
+                    'schema': response_schema,
+                },
+            },
+        },
     )
 
 
