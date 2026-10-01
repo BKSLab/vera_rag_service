@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -78,6 +79,8 @@ async def test_search_returns_reranked_chunk_and_saves_log():
     assert saved_log.query_expansion_status == 'ok'
     assert saved_log.reranker_status == 'ok'
     assert len(saved_log.final_response) == 1
+    saved_response = json.loads(json.dumps(saved_log.final_response))
+    assert saved_response[0]['revision_date'] == '2026-05-25'
     assert saved_log.latency_embed_query_ms >= 0
     assert saved_log.latency_hybrid_search_ms >= 0
     assert saved_log.latency_rerank_ms >= 0

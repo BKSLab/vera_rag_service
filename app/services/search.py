@@ -355,7 +355,7 @@ class SearchService:
             sparse_candidates=[list(item) for item in hybrid_result.sparse],
             rrf_candidates=[list(item) for item in hybrid_result.fused],
             reranked_chunk_ids=reranked_ids,
-            final_response=[result.model_dump() for result in results],
+            final_response=[result.model_dump(mode='json') for result in results],
             query_expansion_status=query_expansion_status,
             reranker_status=reranker_status,
             latency_query_expansion_ms=latency_query_expansion_ms,
